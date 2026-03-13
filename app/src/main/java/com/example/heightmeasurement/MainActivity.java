@@ -3,6 +3,7 @@ package com.example.heightmeasurement;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.LinearLayout;
@@ -21,7 +22,7 @@ import org.opencv.android.OpenCVLoader;
 
 public class MainActivity extends AppCompatActivity {
 
-    private LinearLayout btnPhoto, btnFile;
+    private LinearLayout btnPhoto, btnGallery, btnFile;
 
     private final ActivityResultLauncher<String> cameraPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
@@ -29,6 +30,17 @@ public class MainActivity extends AppCompatActivity {
                     openOpenCvCamera();
                 } else {
                     Toast.makeText(this, "Permission kamera ditolak", Toast.LENGTH_SHORT).show();
+                }
+            });
+
+    private final ActivityResultLauncher<String> galleryLauncher =
+            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
+                if (uri != null) {
+                    Intent intent = new Intent(MainActivity.this, GalleryOpenCvActivity.class);
+                    intent.putExtra("image_uri", uri.toString());
+                    startActivity(intent);
+                } else {
+                    Toast.makeText(this, "Tidak ada gambar dipilih", Toast.LENGTH_SHORT).show();
                 }
             });
 
@@ -51,9 +63,12 @@ public class MainActivity extends AppCompatActivity {
         }
 
         btnPhoto = findViewById(R.id.btnPhoto);
+        btnGallery = findViewById(R.id.btnGallery);
         btnFile = findViewById(R.id.btnFile);
 
         btnPhoto.setOnClickListener(v -> checkCameraPermissionAndOpen());
+
+        btnGallery.setOnClickListener(v -> openGallery());
 
         btnFile.setOnClickListener(v -> {
             Intent intent = new Intent(MainActivity.this, FileListActivity.class);
@@ -73,5 +88,9 @@ public class MainActivity extends AppCompatActivity {
     private void openOpenCvCamera() {
         Intent intent = new Intent(MainActivity.this, OpenCvCameraActivity.class);
         startActivity(intent);
+    }
+
+    private void openGallery() {
+        galleryLauncher.launch("image/*");
     }
 }
