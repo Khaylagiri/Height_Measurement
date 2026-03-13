@@ -14,6 +14,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HeightMeasurement">
 
+        <activity android:name=".ImagePreviewActivity" />
+        <activity android:name=".FileListActivity" />
         <activity android:name=".OpenCvCameraActivity" />
 
         <activity

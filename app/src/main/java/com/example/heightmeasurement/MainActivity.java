@@ -21,7 +21,7 @@ import org.opencv.android.OpenCVLoader;
 
 public class MainActivity extends AppCompatActivity {
 
-    private LinearLayout btnPhoto;
+    private LinearLayout btnPhoto, btnFile;
 
     private final ActivityResultLauncher<String> cameraPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
@@ -51,8 +51,14 @@ public class MainActivity extends AppCompatActivity {
         }
 
         btnPhoto = findViewById(R.id.btnPhoto);
+        btnFile = findViewById(R.id.btnFile);
 
         btnPhoto.setOnClickListener(v -> checkCameraPermissionAndOpen());
+
+        btnFile.setOnClickListener(v -> {
+            Intent intent = new Intent(MainActivity.this, FileListActivity.class);
+            startActivity(intent);
+        });
     }
 
     private void checkCameraPermissionAndOpen() {
@@ -65,7 +71,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void openOpenCvCamera() {
-        Log.d("MainActivity", "Opening OpenCV Camera Activity");
         Intent intent = new Intent(MainActivity.this, OpenCvCameraActivity.class);
         startActivity(intent);
     }
