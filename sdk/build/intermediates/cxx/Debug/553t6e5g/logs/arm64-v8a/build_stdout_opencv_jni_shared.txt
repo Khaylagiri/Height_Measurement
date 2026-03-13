@@ -1,0 +1,2 @@
+ninja: Entering directory `D:\TA Skripsi\aplikasi\HeightMeasurement\sdk\.cxx\Debug\553t6e5g\arm64-v8a'
+ninja: no work to do.
