@@ -1,10 +1,18 @@
 package com.example.heightmeasurement;
 
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.util.Log;
+import android.widget.LinearLayout;
+import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -12,6 +20,18 @@ import androidx.core.view.WindowInsetsCompat;
 import org.opencv.android.OpenCVLoader;
 
 public class MainActivity extends AppCompatActivity {
+
+    private LinearLayout btnPhoto;
+
+    private final ActivityResultLauncher<String> cameraPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+                if (isGranted) {
+                    openOpenCvCamera();
+                } else {
+                    Toast.makeText(this, "Permission kamera ditolak", Toast.LENGTH_SHORT).show();
+                }
+            });
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -29,5 +49,24 @@ public class MainActivity extends AppCompatActivity {
         } else {
             Log.e("opencv", "failed to integrate");
         }
+
+        btnPhoto = findViewById(R.id.btnPhoto);
+
+        btnPhoto.setOnClickListener(v -> checkCameraPermissionAndOpen());
+    }
+
+    private void checkCameraPermissionAndOpen() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
+            openOpenCvCamera();
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
+        }
+    }
+
+    private void openOpenCvCamera() {
+        Log.d("MainActivity", "Opening OpenCV Camera Activity");
+        Intent intent = new Intent(MainActivity.this, OpenCvCameraActivity.class);
+        startActivity(intent);
     }
 }
