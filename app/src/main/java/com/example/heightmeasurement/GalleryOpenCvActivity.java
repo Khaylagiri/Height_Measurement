@@ -17,9 +17,7 @@ import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
 import org.opencv.core.Mat;
 import org.opencv.core.Point;
-import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
-import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 
 import java.io.File;
@@ -93,7 +91,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     new Locale("id", "ID")
             ).format(new Date());
 
-            drawTimestamp(mat, line1, line2);
+            drawTimestampLikeCamera(mat, line1, line2);
 
             Bitmap resultBitmap = Bitmap.createBitmap(
                     mat.cols(),
@@ -111,109 +109,55 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         }
     }
 
-    private void drawTimestamp(Mat mat, String line1, String line2) {
-        double fontScale = Math.max(mat.cols(), mat.rows()) / 900.0;
+    private void drawTimestampLikeCamera(Mat mat, String line1, String line2) {
+        int left = 30;
+        int line1Y = mat.rows() - 300;
+        int line2Y = mat.rows() - 100;
 
-        // Biar tidak terlalu kecil
-        if (fontScale < 0.8) {
-            fontScale = 0.8;
-        }
+        double fontScale = 5.0;   // makin besar
+        int shadowThickness = 20;  // outline hitam
+        int textThickness = 10;    // teks putih
 
-        int thicknessMain = Math.max(2, (int) (fontScale * 2));
-        int thicknessShadow = Math.max(4, (int) (fontScale * 4));
-
-        int[] baseLine1 = new int[1];
-        int[] baseLine2 = new int[1];
-
-        Size textSize1 = Imgproc.getTextSize(
-                line1,
-                Imgproc.FONT_HERSHEY_SIMPLEX,
-                fontScale,
-                thicknessMain,
-                baseLine1
-        );
-
-        Size textSize2 = Imgproc.getTextSize(
-                line2,
-                Imgproc.FONT_HERSHEY_SIMPLEX,
-                fontScale,
-                thicknessMain,
-                baseLine2
-        );
-
-        int leftPadding = 30;
-        int rightPadding = 30;
-        int topPadding = 20;
-        int bottomPadding = 20;
-        int lineSpacing = 20;
-        int bottomMargin = 30;
-
-        int line2Y = mat.rows() - bottomMargin;
-        int line1Y = (int) (line2Y - textSize2.height - lineSpacing);
-
-        int bgLeft = leftPadding - 15;
-        int bgTop = (int) (line1Y - textSize1.height - topPadding);
-        int bgRight = (int) (Math.max(
-                leftPadding + textSize1.width,
-                leftPadding + textSize2.width
-        ) + rightPadding - 15);
-        int bgBottom = line2Y + bottomPadding;
-
-        // Jaga supaya kotak tidak keluar gambar
-        bgLeft = Math.max(bgLeft, 0);
-        bgTop = Math.max(bgTop, 0);
-        bgRight = Math.min(bgRight, mat.cols());
-        bgBottom = Math.min(bgBottom, mat.rows());
-
-        // Background hitam transparan
-        Imgproc.rectangle(
-                mat,
-                new Point(bgLeft, bgTop),
-                new Point(bgRight, bgBottom),
-                new Scalar(0, 0, 0, 120),
-                -1
-        );
-
-        // Shadow hitam
+        // shadow / outline hitam
         Imgproc.putText(
                 mat,
                 line1,
-                new Point(leftPadding, line1Y),
+                new Point(left, line1Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX,
                 fontScale,
                 new Scalar(0, 0, 0, 255),
-                thicknessShadow
+                shadowThickness
         );
 
         Imgproc.putText(
                 mat,
                 line2,
-                new Point(leftPadding, line2Y),
+                new Point(left, line2Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX,
                 fontScale,
                 new Scalar(0, 0, 0, 255),
-                thicknessShadow
+                shadowThickness
         );
 
-        // Teks putih utama
+        // teks putih utama
         Imgproc.putText(
                 mat,
                 line1,
-                new Point(leftPadding, line1Y),
+                new Point(left, line1Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX,
                 fontScale,
                 new Scalar(255, 255, 255, 255),
-                thicknessMain
+                textThickness
         );
 
         Imgproc.putText(
                 mat,
                 line2,
-                new Point(leftPadding, line2Y),
+                new Point(left, line2Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX,
                 fontScale,
                 new Scalar(255, 255, 255, 255),
-                thicknessMain
+                textThickness
         );
     }
 
