@@ -21,6 +21,7 @@ import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
 import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 
@@ -41,6 +42,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
     private CropOverlayView cropOverlayView;
     private Button btnPerspective, btnSaveGalleryImage;
 
+    // bitmap asli hasil load + rotate, TANPA timestamp
+    private Bitmap originalBitmap;
+
+    // bitmap yang sedang ditampilkan, bisa sudah ada timestamp
     private Bitmap currentBitmap;
 
     @Override
@@ -67,18 +72,19 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         }
 
         Uri imageUri = Uri.parse(uriString);
-        currentBitmap = loadAndRotateBitmap(imageUri);
+        originalBitmap = loadAndRotateBitmap(imageUri);
 
-        if (currentBitmap == null) {
+        if (originalBitmap == null) {
             Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
 
+        currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
         imageViewResult.setImageBitmap(currentBitmap);
 
         imageViewResult.post(() -> {
-            Point[] detected = detectInitialBoardCorners(currentBitmap);
+            Point[] detected = detectInitialBoardCorners(originalBitmap);
             if (detected != null) {
                 cropOverlayView.setPoints(detected[0], detected[1], detected[2], detected[3]);
             } else {
@@ -100,23 +106,13 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Log.d(TAG, "Perspective button clicked");
 
             Point[] overlayPoints = cropOverlayView.getPoints();
-            Bitmap warped = warpFromOverlayPoints(currentBitmap, overlayPoints);
+
+            // SELALU warp dari originalBitmap agar timestamp tidak dobel
+            Bitmap warped = warpFromOverlayPoints(originalBitmap, overlayPoints);
 
             if (warped != null) {
-                currentBitmap = warped;
+                currentBitmap = addTimestampToBitmap(warped);
                 imageViewResult.setImageBitmap(currentBitmap);
-
-                imageViewResult.post(() -> {
-                    int w = cropOverlayView.getWidth();
-                    int h = cropOverlayView.getHeight();
-                    cropOverlayView.setPoints(
-                            new Point(40, 40),
-                            new Point(w - 40, 40),
-                            new Point(w - 40, h - 180),
-                            new Point(40, h - 180)
-                    );
-                });
-
                 Toast.makeText(this, "Perspective berhasil", Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(this, "Gagal melakukan perspective", Toast.LENGTH_SHORT).show();
@@ -132,9 +128,9 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
     private Bitmap loadAndRotateBitmap(Uri imageUri) {
         try {
-            Bitmap originalBitmap = loadBitmapFromUri(imageUri);
-            if (originalBitmap == null) return null;
-            return rotateBitmapIfRequired(originalBitmap, imageUri);
+            Bitmap original = loadBitmapFromUri(imageUri);
+            if (original == null) return null;
+            return rotateBitmapIfRequired(original, imageUri);
         } catch (Exception e) {
             Log.e(TAG, "loadAndRotateBitmap error", e);
             return null;
@@ -278,6 +274,39 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         }
     }
 
+    private Bitmap addTimestampToBitmap(Bitmap bitmap) {
+        try {
+            Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+            Mat mat = new Mat();
+            Utils.bitmapToMat(mutableBitmap, mat);
+
+            String line1 = new SimpleDateFormat(
+                    "EEEE, dd MMMM yyyy",
+                    new Locale("id", "ID")
+            ).format(new Date());
+
+            String line2 = new SimpleDateFormat(
+                    "HH:mm:ss",
+                    new Locale("id", "ID")
+            ).format(new Date());
+
+            drawTimestampLikeCamera(mat, line1, line2);
+
+            Bitmap resultBitmap = Bitmap.createBitmap(
+                    mat.cols(),
+                    mat.rows(),
+                    Bitmap.Config.ARGB_8888
+            );
+            Utils.matToBitmap(mat, resultBitmap);
+            mat.release();
+
+            return resultBitmap;
+        } catch (Exception e) {
+            Log.e(TAG, "addTimestampToBitmap error", e);
+            return bitmap;
+        }
+    }
+
     private Point[] findPaperCorners(Mat roiMat, int yOffset) {
         List<MatOfPoint> contours = new ArrayList<>();
         Mat hierarchy = new Mat();
@@ -361,6 +390,56 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         }
 
         return ordered;
+    }
+
+    private void drawTimestampLikeCamera(Mat mat, String line1, String line2) {
+        int left = 30;
+        int line1Y = mat.rows() - 300;
+        int line2Y = mat.rows() - 100;
+
+        double fontScale = 5.0;
+        int shadowThickness = 20;
+        int textThickness = 10;
+
+        Imgproc.putText(
+                mat,
+                line1,
+                new Point(left, line1Y),
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                fontScale,
+                new Scalar(0, 0, 0, 255),
+                shadowThickness
+        );
+
+        Imgproc.putText(
+                mat,
+                line2,
+                new Point(left, line2Y),
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                fontScale,
+                new Scalar(0, 0, 0, 255),
+                shadowThickness
+        );
+
+        Imgproc.putText(
+                mat,
+                line1,
+                new Point(left, line1Y),
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                fontScale,
+                new Scalar(255, 255, 255, 255),
+                textThickness
+        );
+
+        Imgproc.putText(
+                mat,
+                line2,
+                new Point(left, line2Y),
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                fontScale,
+                new Scalar(255, 255, 255, 255),
+                textThickness
+        );
     }
 
     private double distance(Point p1, Point p2) {
