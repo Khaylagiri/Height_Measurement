@@ -75,6 +75,13 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         REFERENCE_HEIGHTS_CM.put(134, 155.0);
     }
 
+    /*
+     * ASUMSI UNTUK HITUNG SKALA
+     * Jika 1 kotak / spacing grid = 10 cm, biarkan 10.0
+     * Kalau ukuran asli beda, ganti di sini.
+     */
+    private static final double GRID_CELL_CM = 10.0;
+
     private ImageView imageViewResult;
     private Button btnPerspective;
     private Button btnSaveGalleryImage;
@@ -164,6 +171,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
             detectedMarkers.clear();
             detectedMarkers.addAll(arucoResult.markers);
+
+            // LOG SKALA
+            logMarkerScaleInfo(detectedMarkers);
+            logGridSpacing(detectedMarkers);
 
             visibleReferencePoints.clear();
             visibleReferencePoints.addAll(extractVisibleReferencePoints(detectedMarkers));
@@ -514,8 +525,11 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     markers.add(marker);
                     drawMarker(mat, marker);
 
-                    Log.d(TAG, "Detected marker id=" + id + ", center=" +
-                            marker.getCenter().x + "," + marker.getCenter().y);
+                    Log.d(TAG, String.format(
+                            Locale.US,
+                            "Detected marker id=%d center=(%.2f, %.2f) avgSide=%.2f px",
+                            id, marker.getCenter().x, marker.getCenter().y, marker.avgSidePx
+                    ));
                 }
             } else {
                 Log.e(TAG, "Aruco ids empty");
@@ -615,7 +629,11 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Point br = boardCorners[2];
             Point bl = boardCorners[3];
 
-            Log.d(TAG, "Board corners tl=" + tl + ", tr=" + tr + ", br=" + br + ", bl=" + bl);
+            Log.d(TAG, String.format(
+                    Locale.US,
+                    "Board corners tl=(%.2f, %.2f), tr=(%.2f, %.2f), br=(%.2f, %.2f), bl=(%.2f, %.2f)",
+                    tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
+            ));
 
             double widthTop = distance(tl, tr);
             double widthBottom = distance(bl, br);
@@ -642,7 +660,11 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             maxWidth = Math.max(900, maxWidth);
             maxHeight = Math.max(1600, maxHeight);
 
-            Log.d(TAG, "Warp size target = " + maxWidth + "x" + maxHeight);
+            Log.d(TAG, String.format(
+                    Locale.US,
+                    "Warp size target = %.2f px x %.2f px",
+                    maxWidth, maxHeight
+            ));
 
             MatOfPoint2f srcPoints = new MatOfPoint2f(tl, tr, br, bl);
             MatOfPoint2f dstPoints = new MatOfPoint2f(
@@ -652,7 +674,49 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     new Point(0, maxHeight - 1)
             );
 
+            // PRINT srcPoints
+            Point[] srcArray = srcPoints.toArray();
+            for (int i = 0; i < srcArray.length; i++) {
+                Log.d(TAG, String.format(
+                        Locale.US,
+                        "srcPoints[%d] = (x=%.2f, y=%.2f)",
+                        i, srcArray[i].x, srcArray[i].y
+                ));
+            }
+
+            // PRINT dstPoints
+            Point[] dstArray = dstPoints.toArray();
+            for (int i = 0; i < dstArray.length; i++) {
+                Log.d(TAG, String.format(
+                        Locale.US,
+                        "dstPoints[%d] = (x=%.2f, y=%.2f)",
+                        i, dstArray[i].x, dstArray[i].y
+                ));
+            }
+
+            Log.d(TAG, String.format(
+                    Locale.US,
+                    "src widthTop=%.2f px, widthBottom=%.2f px, heightLeft=%.2f px, heightRight=%.2f px",
+                    widthTop, widthBottom, heightLeft, heightRight
+            ));
+
             Mat H = Imgproc.getPerspectiveTransform(srcPoints, dstPoints);
+
+            // PRINT H
+            double[] hData = new double[9];
+            H.get(0, 0, hData);
+
+            for (int i = 0; i < 3; i++) {
+                Log.d(TAG, String.format(
+                        Locale.US,
+                        "H[%d] = %.6f %.6f %.6f",
+                        i,
+                        hData[i * 3],
+                        hData[i * 3 + 1],
+                        hData[i * 3 + 2]
+                ));
+            }
+
             Imgproc.warpPerspective(srcMat, warped, H, new Size(maxWidth, maxHeight+1000));
 
             Bitmap result = Bitmap.createBitmap(warped.cols(), warped.rows(), Bitmap.Config.ARGB_8888);
@@ -781,7 +845,11 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     Math.min(gray.rows() - 1, bl.y + pad)
             );
 
-            Log.d(TAG, "Corners => tl=" + tl + ", tr=" + tr + ", br=" + br + ", bl=" + bl);
+            Log.d(TAG, String.format(
+                    Locale.US,
+                    "Corners => tl=(%.2f, %.2f), tr=(%.2f, %.2f), br=(%.2f, %.2f), bl=(%.2f, %.2f)",
+                    tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
+            ));
             Log.d(TAG, "=== detectTwoBoardCorners END ===");
 
             return new Point[]{tl, tr, br, bl};
@@ -794,6 +862,88 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             for (Mat r : rejected) r.release();
             ids.release();
         }
+    }
+
+    private void logMarkerScaleInfo(List<MarkerData> markers) {
+        if (markers == null || markers.isEmpty()) {
+            Log.d(TAG, "No markers for scale");
+            return;
+        }
+
+        double total = 0.0;
+
+        for (MarkerData m : markers) {
+            total += m.avgSidePx;
+
+            Log.d(TAG, String.format(
+                    Locale.US,
+                    "MARKER id=%d side=%.2f px center=(%.2f, %.2f)",
+                    m.id, m.avgSidePx, m.getCenter().x, m.getCenter().y
+            ));
+        }
+
+        double avg = total / markers.size();
+
+        double pxPerCm = avg / GRID_CELL_CM;
+        double cmPerPx = GRID_CELL_CM / avg;
+
+        Log.d(TAG, "===== SCALE FROM MARKER SIDE =====");
+        Log.d(TAG, String.format(Locale.US, "%.2f cm = %.2f px", GRID_CELL_CM, avg));
+        Log.d(TAG, String.format(Locale.US, "1 cm = %.4f px", pxPerCm));
+        Log.d(TAG, String.format(Locale.US, "1 px = %.4f cm", cmPerPx));
+    }
+
+    private void logGridSpacing(List<MarkerData> markers) {
+        if (markers == null || markers.size() < 2) {
+            Log.d(TAG, "Not enough markers for spacing");
+            return;
+        }
+
+        List<Double> distances = new ArrayList<>();
+
+        for (int i = 0; i < markers.size(); i++) {
+            Point a = markers.get(i).getCenter();
+            double min = Double.MAX_VALUE;
+            int nearestId = -1;
+
+            for (int j = 0; j < markers.size(); j++) {
+                if (i == j) continue;
+
+                Point b = markers.get(j).getCenter();
+                double d = distance(a, b);
+
+                if (d < min) {
+                    min = d;
+                    nearestId = markers.get(j).id;
+                }
+            }
+
+            if (min < Double.MAX_VALUE) {
+                distances.add(min);
+                Log.d(TAG, String.format(
+                        Locale.US,
+                        "NEAREST DIST id=%d -> id=%d = %.2f px",
+                        markers.get(i).id, nearestId, min
+                ));
+            }
+        }
+
+        if (distances.isEmpty()) {
+            Log.d(TAG, "No spacing distances");
+            return;
+        }
+
+        double sum = 0.0;
+        for (double d : distances) sum += d;
+        double avg = sum / distances.size();
+
+        double pxPerCm = avg / GRID_CELL_CM;
+        double cmPerPx = GRID_CELL_CM / avg;
+
+        Log.d(TAG, "===== SCALE FROM GRID SPACING =====");
+        Log.d(TAG, String.format(Locale.US, "%.2f cm = %.2f px", GRID_CELL_CM, avg));
+        Log.d(TAG, String.format(Locale.US, "1 cm = %.4f px", pxPerCm));
+        Log.d(TAG, String.format(Locale.US, "1 px = %.4f cm", cmPerPx));
     }
 
     private Bitmap drawMeasurementOnBitmap(Bitmap bitmap, Point head, Point foot, double heightCm) {
