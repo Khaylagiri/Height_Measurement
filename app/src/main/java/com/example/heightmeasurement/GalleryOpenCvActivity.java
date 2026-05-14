@@ -59,28 +59,32 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
     private static final int MAX_WARP_W = 2200;
     private static final int MAX_WARP_H = 3200;
 
-    private static final double MIN_VALID_HEIGHT_CM = 100.0;
-    private static final double MAX_VALID_HEIGHT_CM = 220.0;
-    private static final double MAX_ALLOWED_REF_RMSE_CM = 20.0;
+    // Tambahan tinggi canvas bawah supaya kaki tidak kepotong setelah perspective.
+    // Catatan: tambahan ini TIDAK dipakai untuk menghitung skala tinggi.
+    private static final int EXTRA_BOTTOM_CANVAS_PX = 1000;
 
-    /*
-     * GANTI SESUAI PAPAN ASLI
-     * key = ID marker referensi
-     * value = tinggi marker dari lantai (cm)
+    private static final double MIN_VALID_HEIGHT_CM = 80.0;
+    private static final double MAX_VALID_HEIGHT_CM = 250.0;
+    private static final double MAX_ALLOWED_REF_RMSE_CM = 30.0;
+
+    // Koreksi karena ML Kit biasanya membaca titik wajah/jidat, bukan puncak kepala.
+    // Jika hasil aplikasi 10 cm lebih pendek dari stadiometer, pakai +10.0.
+    // Jika hasil aplikasi 10 cm lebih tinggi dari stadiometer, pakai -10.0.
+    private static final double HEAD_CORRECTION_CM = 16.0;
+
+    /**
+     * Marker referensi WAJIB sesuai posisi real di papan.
+     * Berdasarkan log kamu:
+     * - ID 404 ada di bawah papan
+     * - ID 143 ada di atas papan
+     *
+     * Jika nanti layout marker berubah, ID ini harus dicek ulang dari Logcat.
      */
     private static final Map<Integer, Double> REFERENCE_HEIGHTS_CM = new HashMap<>();
     static {
-        REFERENCE_HEIGHTS_CM.put(143, 0.0);
-        REFERENCE_HEIGHTS_CM.put(15, 85.0);
-        REFERENCE_HEIGHTS_CM.put(134, 155.0);
+        REFERENCE_HEIGHTS_CM.put(404, 0.0);     // bawah / dekat lantai
+        REFERENCE_HEIGHTS_CM.put(143, 200.0);   // atas / tinggi papan 200 cm
     }
-
-    /*
-     * ASUMSI UNTUK HITUNG SKALA
-     * Jika 1 kotak / spacing grid = 10 cm, biarkan 10.0
-     * Kalau ukuran asli beda, ganti di sini.
-     */
-    private static final double GRID_CELL_CM = 10.0;
 
     private ImageView imageViewResult;
     private Button btnPerspective;
@@ -89,6 +93,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
     private Bitmap originalBitmap;
     private Bitmap currentBitmap;
     private Bitmap warpedBaseBitmap;
+    private Bitmap warpDebugBitmap;
 
     private final List<MarkerData> detectedMarkers = new ArrayList<>();
     private final List<ReferencePoint> visibleReferencePoints = new ArrayList<>();
@@ -156,6 +161,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         Log.d(TAG, "=== runAutomaticMeasurement START ===");
         try {
             btnPerspective.setEnabled(false);
+            warpDebugBitmap = null;
 
             Bitmap warped = autoPerspectiveFromTwoBoards(originalBitmap);
             if (warped == null) {
@@ -163,24 +169,44 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                 return;
             }
 
+            Log.d(TAG, "Warped image size = " + warped.getWidth() + " x " + warped.getHeight());
+
             ArucoResult arucoResult = detectArucoAndDrawIds(warped);
             if (arucoResult == null || arucoResult.markers == null || arucoResult.markers.isEmpty()) {
-                Toast.makeText(this, "Deteksi ArUco gagal setelah perspective", Toast.LENGTH_SHORT).show();
+                if (warpDebugBitmap != null) {
+                    currentBitmap = warpDebugBitmap;
+                    imageViewResult.setImageBitmap(currentBitmap);
+                }
+                Toast.makeText(this, "Deteksi ArUco gagal setelah perspective", Toast.LENGTH_LONG).show();
                 return;
             }
 
             detectedMarkers.clear();
             detectedMarkers.addAll(arucoResult.markers);
 
-            // LOG SKALA
-            logMarkerScaleInfo(detectedMarkers);
-            logGridSpacing(detectedMarkers);
-
             visibleReferencePoints.clear();
             visibleReferencePoints.addAll(extractVisibleReferencePoints(detectedMarkers));
 
+            for (ReferencePoint r : visibleReferencePoints) {
+                Log.d(TAG, "REF TERPAKAI => id=" + r.id + ", y=" + r.y + ", cm=" + r.cm);
+            }
+
             logAllDetectedIds(detectedMarkers);
             logReferenceIds(visibleReferencePoints);
+            logCalibrationReferenceInfo(visibleReferencePoints);
+
+            CalibrationModel calibration = buildCalibrationModel(visibleReferencePoints);
+            if (calibration == null) {
+                Toast.makeText(this,
+                        "Kalibrasi gagal. Pastikan ID marker 404 bawah dan 143 atas terlihat.",
+                        Toast.LENGTH_LONG).show();
+
+                warpedBaseBitmap = arucoResult.bitmapWithIds;
+                warpedBaseBitmap = drawReferenceScaleInfo(warpedBaseBitmap, visibleReferencePoints);
+                currentBitmap = warpedBaseBitmap;
+                imageViewResult.setImageBitmap(currentBitmap);
+                return;
+            }
 
             warpedBaseBitmap = arucoResult.bitmapWithIds;
             warpedBaseBitmap = addTimestampToBitmap(warpedBaseBitmap);
@@ -188,14 +214,6 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
             currentBitmap = warpedBaseBitmap;
             imageViewResult.setImageBitmap(currentBitmap);
-
-            CalibrationModel calibration = buildCalibrationModel(visibleReferencePoints);
-            if (calibration == null) {
-                Toast.makeText(this,
-                        "Kalibrasi marker belum valid. Cek ID marker dan tinggi referensi.",
-                        Toast.LENGTH_LONG).show();
-                return;
-            }
 
             runPoseMeasurement(warpedBaseBitmap, calibration);
 
@@ -227,7 +245,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                             boolean success = measureHeightFromPoints(points.head, points.foot, calibration);
                             if (!success) {
                                 Toast.makeText(GalleryOpenCvActivity.this,
-                                        "Pengukuran tidak valid. Cek logcat dan marker referensi.",
+                                        "Pengukuran tidak valid. Cek Logcat.",
                                         Toast.LENGTH_LONG).show();
                             }
                         }
@@ -321,7 +339,11 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             return null;
         }
 
-        headY = Math.max(0.0, headY - 18.0);
+        // ML Kit biasanya mendeteksi titik wajah/jidat, bukan puncak kepala.
+        // Nilai 60 px ini bisa kamu tuning 50-80 tergantung jarak kamera.
+        // Koreksi kecil dari titik wajah/jidat ke arah puncak kepala.
+        // Jangan pakai offset pixel terlalu besar karena tidak stabil antar foto.
+        headY = Math.max(0.0, headY - 60.0);
 
         if (footY <= headY) {
             Log.e(TAG, "Pose invalid: footY <= headY");
@@ -332,19 +354,38 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
     }
 
     private boolean measureHeightFromPoints(Point headPoint, Point footPoint, CalibrationModel calibration) {
-        Double headCm = yPixelToCm(headPoint.y, calibration);
-        Double footCm = yPixelToCm(footPoint.y, calibration);
-
-        if (headCm == null || footCm == null) {
-            String msg = "headCm=" + headCm + ", footCm=" + footCm;
-            Log.e(TAG, msg);
-            currentBitmap = drawDebugPointsOnBitmap(warpedBaseBitmap, headPoint, footPoint, msg);
-            imageViewResult.setImageBitmap(currentBitmap);
-            Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+        if (calibration == null) {
+            Log.e(TAG, "measureHeightFromPoints failed: calibration null");
             return false;
         }
 
+        double headCm = calibration.a * headPoint.y + calibration.b;
+        double footCm = calibration.a * footPoint.y + calibration.b;
+
+        // Koreksi akhir dalam satuan cm agar bisa disesuaikan dengan stadiometer.
+        // Ini lebih stabil daripada menggeser titik kepala ratusan pixel.
+        headCm = headCm + HEAD_CORRECTION_CM;
+
+        // Karena warp memakai EXTRA_BOTTOM_CANVAS_PX agar kaki tidak kepotong,
+        // titik kaki bisa jatuh ke area tambahan di bawah marker 0 cm.
+        // Secara fisik, kaki/lantai tidak boleh di bawah 0 cm, jadi kunci ke 0.
+        if (footCm < 0.0) {
+            Log.d(TAG, "footCm dikunci ke lantai 0 cm, nilai awal=" + footCm);
+            footCm = 0.0;
+        }
+
+        // Kepala juga tidak boleh lebih tinggi dari batas papan 200 cm.
+        if (headCm > 200.0) {
+            Log.d(TAG, "headCm dikunci ke batas atas 200 cm, nilai awal=" + headCm);
+            headCm = 200.0;
+        }
+
         double heightCm = Math.abs(footCm - headCm);
+
+        Log.d(TAG, "===== FINAL HEIGHT FROM REFERENCE MARKERS =====");
+        Log.d(TAG, "headY=" + headPoint.y + ", headCm=" + headCm);
+        Log.d(TAG, "footY=" + footPoint.y + ", footCm=" + footCm);
+        Log.d(TAG, "heightCm=" + heightCm);
 
         currentBitmap = drawMeasurementOnBitmap(warpedBaseBitmap, headPoint, footPoint, heightCm);
         imageViewResult.setImageBitmap(currentBitmap);
@@ -421,42 +462,35 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         Log.d(TAG, "Calibration diffY=" + Math.abs(maxY - minY));
         Log.d(TAG, "Calibration diffCm=" + Math.abs(maxCm - minCm));
 
-        if (a >= 0) {
-            Log.e(TAG, "Calibration failed: slope a must be negative, but got a=" + a);
+        double cmPerPx = Math.abs(a);
+        double ySpan = Math.abs(maxY - minY);
+        double cmSpan = Math.abs(maxCm - minCm);
+
+        // Berdasarkan log yang benar, 404 bawah dan 143 atas harus punya ySpan besar.
+        // Jika ySpan kecil, berarti marker referensi salah atau salah posisi.
+        if (cmPerPx < 0.03 || cmPerPx > 0.12) {
+            Log.e(TAG, "Calibration failed: cmPerPx tidak masuk akal = " + cmPerPx);
+            return null;
+        }
+
+        if (ySpan < 1500.0) {
+            Log.e(TAG, "Calibration failed: marker atas-bawah terlalu dekat, ySpan=" + ySpan);
+            return null;
+        }
+
+        if (cmSpan < 150.0) {
+            Log.e(TAG, "Calibration failed: cmSpan kurang besar = " + cmSpan);
             return null;
         }
 
         if (rmse > MAX_ALLOWED_REF_RMSE_CM) {
-            Log.e(TAG, "Calibration failed: rmse too large");
+            Log.e(TAG, "Calibration failed: rmse terlalu besar = " + rmse);
             return null;
         }
 
-        if (Math.abs(maxY - minY) < 60.0) {
-            Log.e(TAG, "Calibration failed: Y span too small");
-            return null;
-        }
-
-        if (Math.abs(maxCm - minCm) < 20.0) {
-            Log.e(TAG, "Calibration failed: CM span too small");
-            return null;
-        }
-
+        Log.d(TAG, "Calibration VALID, cmPerPx=" + cmPerPx);
         Log.d(TAG, "=== buildCalibrationModel END ===");
         return new CalibrationModel(a, b, minCm, maxCm);
-    }
-
-    private Double yPixelToCm(double y, CalibrationModel model) {
-        if (model == null) return null;
-
-        double cm = model.a * y + model.b;
-        Log.d(TAG, "yPixelToCm y=" + y + " => cm=" + cm);
-
-        if (cm < model.minCm - 40.0 || cm > model.maxCm + 80.0) {
-            Log.e(TAG, "yPixelToCm out of range, y=" + y + ", cm=" + cm);
-            return null;
-        }
-
-        return cm;
     }
 
     private ArucoResult detectArucoAndDrawIds(Bitmap bitmap) {
@@ -481,19 +515,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Imgproc.equalizeHist(gray, gray);
 
             Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
-            DetectorParameters parameters = new DetectorParameters();
-            parameters.set_adaptiveThreshWinSizeMin(3);
-            parameters.set_adaptiveThreshWinSizeMax(53);
-            parameters.set_adaptiveThreshWinSizeStep(4);
-            parameters.set_minMarkerPerimeterRate(0.005);
-            parameters.set_maxMarkerPerimeterRate(4.0);
-            parameters.set_polygonalApproxAccuracyRate(0.08);
-            parameters.set_minCornerDistanceRate(0.005);
-            parameters.set_minDistanceToBorder(1);
-            parameters.set_cornerRefinementMethod(1);
-            parameters.set_cornerRefinementWinSize(7);
-            parameters.set_cornerRefinementMaxIterations(80);
-            parameters.set_cornerRefinementMinAccuracy(0.01);
+            DetectorParameters parameters = createArucoDetectorParameters();
 
             ArucoDetector detector = new ArucoDetector(dictionary, parameters);
             detector.detectMarkers(gray, corners, ids, rejected);
@@ -557,15 +579,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
         for (MarkerData m : markers) {
             if (REFERENCE_HEIGHTS_CM.containsKey(m.id)) {
-                double[] ys = new double[]{m.p0.y, m.p1.y, m.p2.y, m.p3.y};
-                Arrays.sort(ys);
-
-                double markerBottomY = (ys[2] + ys[3]) / 2.0;
                 Double refCm = REFERENCE_HEIGHTS_CM.get(m.id);
-
                 refs.add(new ReferencePoint(
                         m.id,
-                        markerBottomY,
+                        m.getCenter().y,
                         refCm,
                         m.getCenter()
                 ));
@@ -605,10 +622,12 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
         Mat srcMat = new Mat();
         Mat gray = new Mat();
+        Mat debugMat = new Mat();
         Mat warped = new Mat();
 
         try {
             Utils.bitmapToMat(bitmap, srcMat);
+            srcMat.copyTo(debugMat);
 
             if (srcMat.channels() == 4) {
                 Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_RGBA2GRAY);
@@ -631,9 +650,13 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
             Log.d(TAG, String.format(
                     Locale.US,
-                    "Board corners tl=(%.2f, %.2f), tr=(%.2f, %.2f), br=(%.2f, %.2f), bl=(%.2f, %.2f)",
+                    "FINAL WARP POINTS => TL=(%.2f, %.2f), TR=(%.2f, %.2f), BR=(%.2f, %.2f), BL=(%.2f, %.2f)",
                     tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
             ));
+
+            drawWarpPoints(debugMat, tl, tr, br, bl);
+            warpDebugBitmap = Bitmap.createBitmap(debugMat.cols(), debugMat.rows(), Bitmap.Config.ARGB_8888);
+            Utils.matToBitmap(debugMat, warpDebugBitmap);
 
             double widthTop = distance(tl, tr);
             double widthBottom = distance(bl, br);
@@ -642,12 +665,6 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             double heightLeft = distance(tl, bl);
             double heightRight = distance(tr, br);
             double maxHeight = Math.max(heightLeft, heightRight);
-
-            if (maxHeight < maxWidth) {
-                double t = maxHeight;
-                maxHeight = maxWidth;
-                maxWidth = t;
-            }
 
             double scale = Math.min(
                     (double) MAX_WARP_W / Math.max(1.0, maxWidth),
@@ -662,8 +679,8 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
             Log.d(TAG, String.format(
                     Locale.US,
-                    "Warp size target = %.2f px x %.2f px",
-                    maxWidth, maxHeight
+                    "Warp size target = %.2f px x %.2f px + bottomExtra=%d px",
+                    maxWidth, maxHeight, EXTRA_BOTTOM_CANVAS_PX
             ));
 
             MatOfPoint2f srcPoints = new MatOfPoint2f(tl, tr, br, bl);
@@ -674,50 +691,14 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     new Point(0, maxHeight - 1)
             );
 
-            // PRINT srcPoints
-            Point[] srcArray = srcPoints.toArray();
-            for (int i = 0; i < srcArray.length; i++) {
-                Log.d(TAG, String.format(
-                        Locale.US,
-                        "srcPoints[%d] = (x=%.2f, y=%.2f)",
-                        i, srcArray[i].x, srcArray[i].y
-                ));
-            }
-
-            // PRINT dstPoints
-            Point[] dstArray = dstPoints.toArray();
-            for (int i = 0; i < dstArray.length; i++) {
-                Log.d(TAG, String.format(
-                        Locale.US,
-                        "dstPoints[%d] = (x=%.2f, y=%.2f)",
-                        i, dstArray[i].x, dstArray[i].y
-                ));
-            }
-
-            Log.d(TAG, String.format(
-                    Locale.US,
-                    "src widthTop=%.2f px, widthBottom=%.2f px, heightLeft=%.2f px, heightRight=%.2f px",
-                    widthTop, widthBottom, heightLeft, heightRight
-            ));
-
             Mat H = Imgproc.getPerspectiveTransform(srcPoints, dstPoints);
 
-            // PRINT H
-            double[] hData = new double[9];
-            H.get(0, 0, hData);
-
-            for (int i = 0; i < 3; i++) {
-                Log.d(TAG, String.format(
-                        Locale.US,
-                        "H[%d] = %.6f %.6f %.6f",
-                        i,
-                        hData[i * 3],
-                        hData[i * 3 + 1],
-                        hData[i * 3 + 2]
-                ));
-            }
-
-            Imgproc.warpPerspective(srcMat, warped, H, new Size(maxWidth, maxHeight+1000));
+            Imgproc.warpPerspective(
+                    srcMat,
+                    warped,
+                    H,
+                    new Size(maxWidth, maxHeight + EXTRA_BOTTOM_CANVAS_PX)
+            );
 
             Bitmap result = Bitmap.createBitmap(warped.cols(), warped.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(warped, result);
@@ -733,8 +714,9 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Log.e(TAG, "autoPerspectiveFromTwoBoards error", e);
             return null;
         } finally {
-            gray.release();
             srcMat.release();
+            gray.release();
+            debugMat.release();
             warped.release();
         }
     }
@@ -748,19 +730,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
         try {
             Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
-            DetectorParameters parameters = new DetectorParameters();
-            parameters.set_adaptiveThreshWinSizeMin(3);
-            parameters.set_adaptiveThreshWinSizeMax(53);
-            parameters.set_adaptiveThreshWinSizeStep(4);
-            parameters.set_minMarkerPerimeterRate(0.005);
-            parameters.set_maxMarkerPerimeterRate(4.0);
-            parameters.set_polygonalApproxAccuracyRate(0.08);
-            parameters.set_minCornerDistanceRate(0.005);
-            parameters.set_minDistanceToBorder(1);
-            parameters.set_cornerRefinementMethod(1);
-            parameters.set_cornerRefinementWinSize(7);
-            parameters.set_cornerRefinementMaxIterations(80);
-            parameters.set_cornerRefinementMinAccuracy(0.01);
+            DetectorParameters parameters = createArucoDetectorParameters();
 
             ArucoDetector detector = new ArucoDetector(dictionary, parameters);
             detector.detectMarkers(gray, corners, ids, rejected);
@@ -784,12 +754,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                 allPts.add(new Point(xy3[0], xy3[1]));
             }
 
-            if (allPts.size() < 4) {
-                Log.e(TAG, "Not enough corner points");
-                return null;
-            }
-
-            Point tl = null, tr = null, br = null, bl = null;
+            Point tl = null;
+            Point tr = null;
+            Point br = null;
+            Point bl = null;
 
             double minSum = Double.MAX_VALUE;
             double maxSum = -Double.MAX_VALUE;
@@ -825,25 +793,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
             double pad = 30.0;
 
-            tl = new Point(
-                    Math.max(0, tl.x - pad),
-                    Math.max(0, tl.y - pad)
-            );
-
-            tr = new Point(
-                    Math.min(gray.cols() - 1, tr.x + pad),
-                    Math.max(0, tr.y - pad)
-            );
-
-            br = new Point(
-                    Math.min(gray.cols() - 1, br.x + pad),
-                    Math.min(gray.rows() - 1, br.y + pad)
-            );
-
-            bl = new Point(
-                    Math.max(0, bl.x - pad),
-                    Math.min(gray.rows() - 1, bl.y + pad)
-            );
+            tl = new Point(Math.max(0, tl.x - pad), Math.max(0, tl.y - pad));
+            tr = new Point(Math.min(gray.cols() - 1, tr.x + pad), Math.max(0, tr.y - pad));
+            br = new Point(Math.min(gray.cols() - 1, br.x + pad), Math.min(gray.rows() - 1, br.y + pad));
+            bl = new Point(Math.max(0, bl.x - pad), Math.min(gray.rows() - 1, bl.y + pad));
 
             Log.d(TAG, String.format(
                     Locale.US,
@@ -864,86 +817,42 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         }
     }
 
-    private void logMarkerScaleInfo(List<MarkerData> markers) {
-        if (markers == null || markers.isEmpty()) {
-            Log.d(TAG, "No markers for scale");
-            return;
-        }
+    private void drawWarpPoints(Mat mat, Point tl, Point tr, Point br, Point bl) {
+        Imgproc.circle(mat, tl, 18, new Scalar(255, 0, 0, 255), -1);
+        Imgproc.circle(mat, tr, 18, new Scalar(0, 255, 0, 255), -1);
+        Imgproc.circle(mat, br, 18, new Scalar(0, 0, 255, 255), -1);
+        Imgproc.circle(mat, bl, 18, new Scalar(255, 255, 0, 255), -1);
 
-        double total = 0.0;
+        putOutlinedTextMat(mat, "TL", new Point(tl.x + 20, tl.y + 30), 1.0,
+                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
+        putOutlinedTextMat(mat, "TR", new Point(tr.x - 100, tr.y + 30), 1.0,
+                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
+        putOutlinedTextMat(mat, "BR", new Point(br.x - 100, br.y - 30), 1.0,
+                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
+        putOutlinedTextMat(mat, "BL", new Point(bl.x + 20, bl.y - 30), 1.0,
+                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
 
-        for (MarkerData m : markers) {
-            total += m.avgSidePx;
-
-            Log.d(TAG, String.format(
-                    Locale.US,
-                    "MARKER id=%d side=%.2f px center=(%.2f, %.2f)",
-                    m.id, m.avgSidePx, m.getCenter().x, m.getCenter().y
-            ));
-        }
-
-        double avg = total / markers.size();
-
-        double pxPerCm = avg / GRID_CELL_CM;
-        double cmPerPx = GRID_CELL_CM / avg;
-
-        Log.d(TAG, "===== SCALE FROM MARKER SIDE =====");
-        Log.d(TAG, String.format(Locale.US, "%.2f cm = %.2f px", GRID_CELL_CM, avg));
-        Log.d(TAG, String.format(Locale.US, "1 cm = %.4f px", pxPerCm));
-        Log.d(TAG, String.format(Locale.US, "1 px = %.4f cm", cmPerPx));
+        Log.d(TAG, "DRAW WARP POINT TL = " + tl.x + ", " + tl.y);
+        Log.d(TAG, "DRAW WARP POINT TR = " + tr.x + ", " + tr.y);
+        Log.d(TAG, "DRAW WARP POINT BR = " + br.x + ", " + br.y);
+        Log.d(TAG, "DRAW WARP POINT BL = " + bl.x + ", " + bl.y);
     }
 
-    private void logGridSpacing(List<MarkerData> markers) {
-        if (markers == null || markers.size() < 2) {
-            Log.d(TAG, "Not enough markers for spacing");
-            return;
-        }
-
-        List<Double> distances = new ArrayList<>();
-
-        for (int i = 0; i < markers.size(); i++) {
-            Point a = markers.get(i).getCenter();
-            double min = Double.MAX_VALUE;
-            int nearestId = -1;
-
-            for (int j = 0; j < markers.size(); j++) {
-                if (i == j) continue;
-
-                Point b = markers.get(j).getCenter();
-                double d = distance(a, b);
-
-                if (d < min) {
-                    min = d;
-                    nearestId = markers.get(j).id;
-                }
-            }
-
-            if (min < Double.MAX_VALUE) {
-                distances.add(min);
-                Log.d(TAG, String.format(
-                        Locale.US,
-                        "NEAREST DIST id=%d -> id=%d = %.2f px",
-                        markers.get(i).id, nearestId, min
-                ));
-            }
-        }
-
-        if (distances.isEmpty()) {
-            Log.d(TAG, "No spacing distances");
-            return;
-        }
-
-        double sum = 0.0;
-        for (double d : distances) sum += d;
-        double avg = sum / distances.size();
-
-        double pxPerCm = avg / GRID_CELL_CM;
-        double cmPerPx = GRID_CELL_CM / avg;
-
-        Log.d(TAG, "===== SCALE FROM GRID SPACING =====");
-        Log.d(TAG, String.format(Locale.US, "%.2f cm = %.2f px", GRID_CELL_CM, avg));
-        Log.d(TAG, String.format(Locale.US, "1 cm = %.4f px", pxPerCm));
-        Log.d(TAG, String.format(Locale.US, "1 px = %.4f cm", cmPerPx));
+    private DetectorParameters createArucoDetectorParameters() {
+        DetectorParameters parameters = new DetectorParameters();
+        parameters.set_adaptiveThreshWinSizeMin(3);
+        parameters.set_adaptiveThreshWinSizeMax(53);
+        parameters.set_adaptiveThreshWinSizeStep(4);
+        parameters.set_minMarkerPerimeterRate(0.005);
+        parameters.set_maxMarkerPerimeterRate(4.0);
+        parameters.set_polygonalApproxAccuracyRate(0.08);
+        parameters.set_minCornerDistanceRate(0.005);
+        parameters.set_minDistanceToBorder(1);
+        parameters.set_cornerRefinementMethod(1);
+        parameters.set_cornerRefinementWinSize(7);
+        parameters.set_cornerRefinementMaxIterations(80);
+        parameters.set_cornerRefinementMinAccuracy(0.01);
+        return parameters;
     }
 
     private Bitmap drawMeasurementOnBitmap(Bitmap bitmap, Point head, Point foot, double heightCm) {
@@ -952,9 +861,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Mat mat = new Mat();
             Utils.bitmapToMat(mutableBitmap, mat);
 
-            Point verticalFoot = new Point(head.x, foot.y);
-
-            Imgproc.line(mat, head, verticalFoot, new Scalar(0, 255, 255, 255), 6);
+            // Titik kepala dan kaki saja, tanpa garis.
             Imgproc.circle(mat, head, 12, new Scalar(0, 0, 255, 255), -1);
             Imgproc.circle(mat, foot, 12, new Scalar(255, 0, 0, 255), -1);
 
@@ -980,7 +887,6 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
             Imgproc.circle(mat, head, 14, new Scalar(0, 0, 255, 255), -1);
             Imgproc.circle(mat, foot, 14, new Scalar(255, 0, 0, 255), -1);
-            Imgproc.line(mat, head, new Point(head.x, foot.y), new Scalar(0, 255, 255, 255), 5);
 
             putOutlinedTextMat(
                     mat,
@@ -1040,27 +946,56 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
     }
 
     private void putHeaderText(Mat mat, String text) {
-        Point pos = new Point(mat.cols() * 0.12, 65);
+        // Judul hasil pengukuran dibuat lebih besar dan merah supaya tidak menyaru.
+        Point pos = new Point(mat.cols() * 0.08, 95);
+
         Imgproc.rectangle(
                 mat,
-                new Point(pos.x - 20, pos.y - 40),
-                new Point(pos.x + 600, pos.y + 18),
-                new Scalar(255, 255, 255, 220),
+                new Point(pos.x - 28, pos.y - 65),
+                new Point(pos.x + 900, pos.y + 32),
+                new Scalar(255, 255, 255, 230),
                 -1
         );
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.0,
-                new Scalar(20, 20, 20, 255), 3);
+
+        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
+                new Scalar(255, 255, 255, 255), 9);
+
+        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
+                new Scalar(255, 0, 0, 255), 5);
     }
 
     private void putHeaderText2(Mat mat, String text) {
-        Point pos = new Point(mat.cols() * 0.12, 112);
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.0,
-                new Scalar(20, 20, 20, 255), 3);
+        // Angka tinggi dibuat lebih besar dan merah.
+        Point pos = new Point(mat.cols() * 0.08, 170);
+
+        Imgproc.rectangle(
+                mat,
+                new Point(pos.x - 28, pos.y - 58),
+                new Point(pos.x + 1050, pos.y + 32),
+                new Scalar(255, 255, 255, 230),
+                -1
+        );
+
+        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
+                new Scalar(255, 255, 255, 255), 9);
+
+        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
+                new Scalar(255, 0, 0, 255), 5);
     }
 
     private void putOutlinedTextMat(Mat mat, String text, Point pos, double scale, Scalar fg, Scalar bg) {
         Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, scale, bg, 6);
         Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, scale, fg, 2);
+    }
+
+    private void logCalibrationReferenceInfo(List<ReferencePoint> refs) {
+        Log.d(TAG, "===== CALIBRATION REFERENCE INFO =====");
+        Log.d(TAG, "REFERENCE COUNT = " + (refs == null ? 0 : refs.size()));
+        if (refs != null) {
+            for (ReferencePoint r : refs) {
+                Log.d(TAG, "REF id=" + r.id + " y=" + r.y + " cm=" + r.cm);
+            }
+        }
     }
 
     private void logAllDetectedIds(List<MarkerData> markers) {
@@ -1083,9 +1018,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         if (landmark == null) {
             Log.d(TAG, name + " = null");
         } else {
-            Log.d(TAG, name + " = (" +
-                    landmark.getPosition().x + ", " +
-                    landmark.getPosition().y + ")");
+            Log.d(TAG, name + " = (" + landmark.getPosition().x + ", " + landmark.getPosition().y + ")");
         }
     }
 
@@ -1099,15 +1032,8 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Mat mat = new Mat();
             Utils.bitmapToMat(mutableBitmap, mat);
 
-            String line1 = new SimpleDateFormat(
-                    "EEEE, dd MMMM yyyy",
-                    new Locale("id", "ID")
-            ).format(new Date());
-
-            String line2 = new SimpleDateFormat(
-                    "HH:mm:ss",
-                    new Locale("id", "ID")
-            ).format(new Date());
+            String line1 = new SimpleDateFormat("EEEE, dd MMMM yyyy", new Locale("id", "ID")).format(new Date());
+            String line2 = new SimpleDateFormat("HH:mm:ss", new Locale("id", "ID")).format(new Date());
 
             drawTimestampLikeCamera(mat, line1, line2);
 
@@ -1123,29 +1049,33 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
     }
 
     private void drawTimestampLikeCamera(Mat mat, String line1, String line2) {
-        int left = 30;
-        int line1Y = mat.rows() - 120;
-        int line2Y = mat.rows() - 55;
+        int left = 35;
 
-        double fontScale = 1.0;
-        int shadowThickness = 6;
-        int textThickness = 2;
+        // Dinaikkan sedikit supaya tidak ketutup tombol bawah.
+        int line1Y = mat.rows() - 190;
+        int line2Y = mat.rows() - 105;
 
+        double fontScale = 1.35;
+        int outlineThickness = 8;
+        int textThickness = 4;
+
+        // Outline putih agar tulisan hitam tetap terbaca di background gelap.
         Imgproc.putText(mat, line1, new Point(left, line1Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(0, 0, 0, 255), shadowThickness);
+                new Scalar(255, 255, 255, 255), outlineThickness);
 
         Imgproc.putText(mat, line2, new Point(left, line2Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(0, 0, 0, 255), shadowThickness);
+                new Scalar(255, 255, 255, 255), outlineThickness);
 
+        // Teks utama timestamp tetap hitam.
         Imgproc.putText(mat, line1, new Point(left, line1Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(255, 255, 255, 255), textThickness);
+                new Scalar(0, 0, 0, 255), textThickness);
 
         Imgproc.putText(mat, line2, new Point(left, line2Y),
                 Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(255, 255, 255, 255), textThickness);
+                new Scalar(0, 0, 0, 255), textThickness);
     }
 
     private Bitmap loadAndRotateBitmap(Uri imageUri) {
@@ -1196,15 +1126,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     return bitmap;
             }
 
-            return Bitmap.createBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    bitmap.getWidth(),
-                    bitmap.getHeight(),
-                    matrix,
-                    true
-            );
+            return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
 
         } catch (Exception e) {
             Log.e(TAG, "rotateBitmapIfRequired error", e);
@@ -1219,11 +1141,7 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                 picturesDir.mkdirs();
             }
 
-            String fileName = new SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.getDefault()
-            ).format(new Date());
-
+            String fileName = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
             File imageFile = new File(picturesDir, "GAL_" + fileName + ".jpg");
 
             FileOutputStream fos = new FileOutputStream(imageFile);
@@ -1293,7 +1211,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
     private static class MarkerData {
         int id;
-        Point p0, p1, p2, p3;
+        Point p0;
+        Point p1;
+        Point p2;
+        Point p3;
         double avgSidePx;
 
         MarkerData(int id, Point p0, Point p1, Point p2, Point p3, double avgSidePx) {
