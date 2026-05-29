@@ -1,0 +1,789 @@
+package com.example.heightmeasurement;
+
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Environment;
+import android.util.Log;
+import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.Toast;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.exifinterface.media.ExifInterface;
+
+import com.google.mediapipe.framework.image.BitmapImageBuilder;
+import com.google.mediapipe.framework.image.MPImage;
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark;
+import com.google.mediapipe.tasks.core.BaseOptions;
+import com.google.mediapipe.tasks.vision.core.RunningMode;
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker;
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult;
+
+import org.opencv.android.OpenCVLoader;
+import org.opencv.android.Utils;
+import org.opencv.core.Mat;
+import org.opencv.core.Point;
+import org.opencv.core.Scalar;
+import org.opencv.imgproc.Imgproc;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+public class MediaPipeActivity extends AppCompatActivity {
+
+    private static final String TAG = "MEDIAPIPE_HEIGHT";
+    private static final String MODEL_ASSET_PATH = "pose_landmarker_lite.task";
+
+    /*
+     * Ini masih estimasi berbasis tinggi frame.
+     * Kalau ingin hasil tinggi badan lebih akurat dalam cm,
+     * sebaiknya gunakan marker / objek referensi seperti kertas A4, penggaris,
+     * atau ArUco marker sebagai pembanding ukuran nyata.
+     */
+    private static final double FRAME_REAL_HEIGHT_CM = 200.0;
+
+    private ImageView imageViewMediaPipe;
+    private Button btnPickMediaPipeImage;
+    private Button btnProcessMediaPipe;
+    private Button btnSaveMediaPipe;
+
+    private Bitmap selectedBitmap;
+    private Bitmap currentResultBitmap;
+
+    private PoseLandmarker poseLandmarker;
+
+    private final ActivityResultLauncher<String> pickImageLauncher =
+            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
+                if (uri == null) {
+                    Toast.makeText(this, "Tidak ada gambar dipilih", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                selectedBitmap = loadAndRotateBitmap(uri);
+
+                if (selectedBitmap == null) {
+                    Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                currentResultBitmap = selectedBitmap.copy(Bitmap.Config.ARGB_8888, true);
+                imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+
+                Toast.makeText(this, "Foto dipilih", Toast.LENGTH_SHORT).show();
+            });
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_mediapipe);
+
+        imageViewMediaPipe = findViewById(R.id.imageViewMediaPipe);
+        btnPickMediaPipeImage = findViewById(R.id.btnPickMediaPipeImage);
+        btnProcessMediaPipe = findViewById(R.id.btnProcessMediaPipe);
+        btnSaveMediaPipe = findViewById(R.id.btnSaveMediaPipe);
+
+        if (!OpenCVLoader.initLocal()) {
+            Toast.makeText(this, "OpenCV gagal diinisialisasi", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        initPoseLandmarker();
+
+        btnPickMediaPipeImage.setOnClickListener(v -> {
+            Toast.makeText(this, "Pilih foto", Toast.LENGTH_SHORT).show();
+            pickImageLauncher.launch("image/*");
+        });
+
+        btnProcessMediaPipe.setOnClickListener(v -> {
+            Toast.makeText(this, "Memproses MediaPipe", Toast.LENGTH_SHORT).show();
+
+            if (selectedBitmap == null) {
+                Toast.makeText(this, "Pilih foto dulu", Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            processMediaPipePose();
+        });
+
+        btnSaveMediaPipe.setOnClickListener(v -> {
+            if (currentResultBitmap == null) {
+                Toast.makeText(this, "Belum ada hasil untuk disimpan", Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            saveBitmapToAppFiles(currentResultBitmap);
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+
+        if (poseLandmarker != null) {
+            poseLandmarker.close();
+            poseLandmarker = null;
+        }
+    }
+
+    private void initPoseLandmarker() {
+        try {
+            BaseOptions baseOptions = BaseOptions.builder()
+                    .setModelAssetPath(MODEL_ASSET_PATH)
+                    .build();
+
+            PoseLandmarker.PoseLandmarkerOptions options =
+                    PoseLandmarker.PoseLandmarkerOptions.builder()
+                            .setBaseOptions(baseOptions)
+                            .setRunningMode(RunningMode.IMAGE)
+                            .setNumPoses(1)
+                            .setMinPoseDetectionConfidence(0.5f)
+                            .setMinPosePresenceConfidence(0.5f)
+                            .setMinTrackingConfidence(0.5f)
+                            .build();
+
+            poseLandmarker = PoseLandmarker.createFromOptions(this, options);
+            Toast.makeText(this, "MediaPipe siap", Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+            Log.e(TAG, "initPoseLandmarker error", e);
+            Toast.makeText(
+                    this,
+                    "MediaPipe gagal init. Cek file pose_landmarker_lite.task di assets.",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void processMediaPipePose() {
+        try {
+            if (poseLandmarker == null) {
+                Toast.makeText(this, "PoseLandmarker belum siap", Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            MPImage mpImage = new BitmapImageBuilder(selectedBitmap).build();
+            PoseLandmarkerResult result = poseLandmarker.detect(mpImage);
+
+            if (result == null || result.landmarks().isEmpty()) {
+                Toast.makeText(this, "Tubuh tidak terdeteksi oleh MediaPipe", Toast.LENGTH_LONG).show();
+
+                currentResultBitmap = drawError(selectedBitmap, "Tubuh tidak terdeteksi");
+                imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+                return;
+            }
+
+            List<NormalizedLandmark> landmarks = result.landmarks().get(0);
+
+            if (landmarks.size() < 33) {
+                currentResultBitmap = drawError(selectedBitmap, "Landmark tubuh tidak lengkap");
+                imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+                return;
+            }
+
+            currentResultBitmap = drawPoseAndHeight(selectedBitmap, landmarks);
+            imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+
+        } catch (Exception e) {
+            Log.e(TAG, "processMediaPipePose error", e);
+            Toast.makeText(this, "Error MediaPipe: " + e.getMessage(), Toast.LENGTH_LONG).show();
+
+            currentResultBitmap = drawError(selectedBitmap, "ERROR: " + e.getMessage());
+            imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+        }
+    }
+
+    private Bitmap drawPoseAndHeight(Bitmap source, List<NormalizedLandmark> landmarks) {
+        Mat mat = new Mat();
+
+        try {
+            Bitmap mutable = source.copy(Bitmap.Config.ARGB_8888, true);
+            Utils.bitmapToMat(mutable, mat);
+
+            int w = mat.cols();
+            int h = mat.rows();
+
+            /*
+             * 1. Gambar koneksi skeleton.
+             */
+            drawPoseConnections(mat, landmarks, w, h);
+
+            /*
+             * 2. Gambar titik landmark dan cari bounding box.
+             * Bounding box ini hanya untuk visual, bukan lagi dasar utama tinggi badan.
+             */
+            double minX = Double.MAX_VALUE;
+            double minY = Double.MAX_VALUE;
+            double maxX = -Double.MAX_VALUE;
+            double maxY = -Double.MAX_VALUE;
+
+            for (NormalizedLandmark lm : landmarks) {
+                double x = lm.x() * w;
+                double y = lm.y() * h;
+
+                if (x < 0 || x >= w || y < 0 || y >= h) {
+                    continue;
+                }
+
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+
+                Imgproc.circle(
+                        mat,
+                        new Point(x, y),
+                        6,
+                        new Scalar(0, 255, 0, 255),
+                        -1
+                );
+            }
+
+            if (minX == Double.MAX_VALUE || minY == Double.MAX_VALUE) {
+                return drawError(source, "Landmark tidak valid");
+            }
+
+            /*
+             * 3. Koreksi visual kepala dan kaki untuk bounding box.
+             */
+            double bodyHeightPxRaw = maxY - minY;
+            double headCorrectionPx = bodyHeightPxRaw * 0.08;
+            double footCorrectionPx = bodyHeightPxRaw * 0.03;
+
+            minY = Math.max(0, minY - headCorrectionPx);
+            maxY = Math.min(h - 1, maxY + footCorrectionPx);
+
+            int left = (int) Math.max(0, minX - 40);
+            int top = (int) Math.max(0, minY);
+            int right = (int) Math.min(w - 1, maxX + 40);
+            int bottom = (int) Math.min(h - 1, maxY);
+
+            /*
+             * 4. Gambar bounding box merah.
+             */
+            Imgproc.rectangle(
+                    mat,
+                    new Point(left, top),
+                    new Point(right, bottom),
+                    new Scalar(255, 0, 0, 255),
+                    4
+            );
+
+            /*
+             * 5. Gambar garis tinggi visual.
+             * Ini hanya garis bantu dari atas ke bawah tubuh.
+             */
+            int centerX = (left + right) / 2;
+
+            Imgproc.line(
+                    mat,
+                    new Point(centerX, top),
+                    new Point(centerX, bottom),
+                    new Scalar(0, 255, 255, 255),
+                    4
+            );
+
+            Imgproc.circle(
+                    mat,
+                    new Point(centerX, top),
+                    10,
+                    new Scalar(0, 0, 255, 255),
+                    -1
+            );
+
+            Imgproc.circle(
+                    mat,
+                    new Point(centerX, bottom),
+                    10,
+                    new Scalar(255, 255, 0, 255),
+                    -1
+            );
+
+            /*
+             * 6. Hitung tinggi badan menggunakan segment landmark tubuh.
+             * Ini lebih baik daripada hanya menggunakan tinggi bounding box.
+             */
+            double heightPxBySegment = estimateHeightPxBySegments(landmarks, w, h);
+
+            /*
+             * 7. Konversi pixel ke cm.
+             * Masih estimasi karena skala diambil dari tinggi frame.
+             */
+            double cmPerPixel = FRAME_REAL_HEIGHT_CM / h;
+            double heightCm = heightPxBySegment * cmPerPixel;
+
+            /*
+             * 8. Gambar garis segment utama yang dipakai untuk pengukuran.
+             */
+            drawMeasurementSegments(mat, landmarks, w, h);
+
+            drawHeader(mat, "TINGGI ESTIMASI: " + format1(heightCm) + " cm");
+            drawSmallText(mat, "MediaPipe Segment Measurement", new Point(20, 95));
+
+            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
+            Utils.matToBitmap(mat, resultBitmap);
+
+            return resultBitmap;
+
+        } catch (Exception e) {
+            Log.e(TAG, "drawPoseAndHeight error", e);
+            return drawError(source, "Draw error: " + e.getMessage());
+
+        } finally {
+            mat.release();
+        }
+    }
+
+    /*
+     * Algoritma utama:
+     * Tinggi badan dihitung dari panjang segment tubuh:
+     *
+     * kepala atas -> bahu tengah -> pinggul tengah -> lutut -> ankle -> kaki
+     *
+     * Kaki kiri dan kanan dihitung, lalu dirata-rata agar lebih stabil.
+     */
+    private double estimateHeightPxBySegments(List<NormalizedLandmark> landmarks, int w, int h) {
+        Point nose = landmarkToPoint(landmarks.get(0), w, h);
+
+        Point leftShoulder = landmarkToPoint(landmarks.get(11), w, h);
+        Point rightShoulder = landmarkToPoint(landmarks.get(12), w, h);
+
+        Point leftHip = landmarkToPoint(landmarks.get(23), w, h);
+        Point rightHip = landmarkToPoint(landmarks.get(24), w, h);
+
+        Point leftKnee = landmarkToPoint(landmarks.get(25), w, h);
+        Point rightKnee = landmarkToPoint(landmarks.get(26), w, h);
+
+        Point leftAnkle = landmarkToPoint(landmarks.get(27), w, h);
+        Point rightAnkle = landmarkToPoint(landmarks.get(28), w, h);
+
+        Point leftHeel = landmarkToPoint(landmarks.get(29), w, h);
+        Point rightHeel = landmarkToPoint(landmarks.get(30), w, h);
+
+        Point leftFoot = landmarkToPoint(landmarks.get(31), w, h);
+        Point rightFoot = landmarkToPoint(landmarks.get(32), w, h);
+
+        Point shoulderMid = midpoint(leftShoulder, rightShoulder);
+        Point hipMid = midpoint(leftHip, rightHip);
+
+        /*
+         * MediaPipe tidak punya titik ubun-ubun.
+         * Jadi titik kepala atas diperkirakan dari arah shoulderMid -> nose.
+         */
+        Point headTop = estimateHeadTop(nose, shoulderMid);
+
+        /*
+         * Segment kepala + leher.
+         */
+        double headAndNeck = distance(headTop, shoulderMid);
+
+        /*
+         * Segment badan.
+         */
+        double torso = distance(shoulderMid, hipMid);
+
+        /*
+         * Segment kaki kiri.
+         */
+        double leftFootPart = Math.max(
+                distance(leftAnkle, leftHeel),
+                distance(leftAnkle, leftFoot)
+        );
+
+        double leftLeg =
+                distance(leftHip, leftKnee)
+                        + distance(leftKnee, leftAnkle)
+                        + leftFootPart;
+
+        /*
+         * Segment kaki kanan.
+         */
+        double rightFootPart = Math.max(
+                distance(rightAnkle, rightHeel),
+                distance(rightAnkle, rightFoot)
+        );
+
+        double rightLeg =
+                distance(rightHip, rightKnee)
+                        + distance(rightKnee, rightAnkle)
+                        + rightFootPart;
+
+        /*
+         * Rata-rata kaki kiri dan kanan agar hasil lebih stabil.
+         */
+        double legAverage = (leftLeg + rightLeg) / 2.0;
+
+        return headAndNeck + torso + legAverage;
+    }
+
+    /*
+     * Estimasi titik kepala paling atas.
+     */
+    private Point estimateHeadTop(Point nose, Point shoulderMid) {
+        double noseToShoulder = distance(nose, shoulderMid);
+
+        /*
+         * Koreksi kepala atas.
+         * Nilai 0.45 bisa disesuaikan.
+         * Jika hasil terlalu pendek, naikkan ke 0.50 atau 0.55.
+         * Jika hasil terlalu tinggi, turunkan ke 0.35 atau 0.40.
+         */
+        double headTopCorrection = noseToShoulder * 0.45;
+
+        double dirX = nose.x - shoulderMid.x;
+        double dirY = nose.y - shoulderMid.y;
+        double len = Math.sqrt(dirX * dirX + dirY * dirY);
+
+        if (len > 0) {
+            dirX /= len;
+            dirY /= len;
+
+            return new Point(
+                    nose.x + dirX * headTopCorrection,
+                    nose.y + dirY * headTopCorrection
+            );
+        } else {
+            return new Point(
+                    nose.x,
+                    nose.y - headTopCorrection
+            );
+        }
+    }
+
+    /*
+     * Menggambar segment utama yang dipakai dalam perhitungan tinggi.
+     */
+    private void drawMeasurementSegments(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
+        try {
+            Point nose = landmarkToPoint(landmarks.get(0), w, h);
+
+            Point leftShoulder = landmarkToPoint(landmarks.get(11), w, h);
+            Point rightShoulder = landmarkToPoint(landmarks.get(12), w, h);
+
+            Point leftHip = landmarkToPoint(landmarks.get(23), w, h);
+            Point rightHip = landmarkToPoint(landmarks.get(24), w, h);
+
+            Point leftKnee = landmarkToPoint(landmarks.get(25), w, h);
+            Point rightKnee = landmarkToPoint(landmarks.get(26), w, h);
+
+            Point leftAnkle = landmarkToPoint(landmarks.get(27), w, h);
+            Point rightAnkle = landmarkToPoint(landmarks.get(28), w, h);
+
+            Point leftHeel = landmarkToPoint(landmarks.get(29), w, h);
+            Point rightHeel = landmarkToPoint(landmarks.get(30), w, h);
+
+            Point leftFoot = landmarkToPoint(landmarks.get(31), w, h);
+            Point rightFoot = landmarkToPoint(landmarks.get(32), w, h);
+
+            Point shoulderMid = midpoint(leftShoulder, rightShoulder);
+            Point hipMid = midpoint(leftHip, rightHip);
+            Point headTop = estimateHeadTop(nose, shoulderMid);
+
+            Scalar segmentColor = new Scalar(255, 0, 255, 255);
+
+            Imgproc.line(mat, headTop, shoulderMid, segmentColor, 5);
+            Imgproc.line(mat, shoulderMid, hipMid, segmentColor, 5);
+
+            Imgproc.line(mat, leftHip, leftKnee, segmentColor, 5);
+            Imgproc.line(mat, leftKnee, leftAnkle, segmentColor, 5);
+            Imgproc.line(mat, leftAnkle, leftHeel, segmentColor, 5);
+            Imgproc.line(mat, leftAnkle, leftFoot, segmentColor, 5);
+
+            Imgproc.line(mat, rightHip, rightKnee, segmentColor, 5);
+            Imgproc.line(mat, rightKnee, rightAnkle, segmentColor, 5);
+            Imgproc.line(mat, rightAnkle, rightHeel, segmentColor, 5);
+            Imgproc.line(mat, rightAnkle, rightFoot, segmentColor, 5);
+
+            Imgproc.circle(mat, headTop, 9, new Scalar(255, 0, 255, 255), -1);
+            Imgproc.circle(mat, shoulderMid, 9, new Scalar(255, 0, 255, 255), -1);
+            Imgproc.circle(mat, hipMid, 9, new Scalar(255, 0, 255, 255), -1);
+
+        } catch (Exception e) {
+            Log.e(TAG, "drawMeasurementSegments error", e);
+        }
+    }
+
+    /*
+     * Menggambar koneksi antar landmark supaya tampak skeleton pose.
+     */
+    private void drawPoseConnections(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
+        int[][] connections = new int[][]{
+                // kepala / wajah sederhana
+                {0, 1}, {1, 2}, {2, 3}, {3, 7},
+                {0, 4}, {4, 5}, {5, 6}, {6, 8},
+                {9, 10},
+
+                // bahu
+                {11, 12},
+
+                // tangan kiri
+                {11, 13}, {13, 15},
+
+                // tangan kanan
+                {12, 14}, {14, 16},
+
+                // badan
+                {11, 23}, {12, 24}, {23, 24},
+
+                // kaki kiri
+                {23, 25}, {25, 27}, {27, 29}, {29, 31},
+
+                // kaki kanan
+                {24, 26}, {26, 28}, {28, 30}, {30, 32}
+        };
+
+        for (int[] pair : connections) {
+            int start = pair[0];
+            int end = pair[1];
+
+            if (start >= landmarks.size() || end >= landmarks.size()) {
+                continue;
+            }
+
+            NormalizedLandmark p1 = landmarks.get(start);
+            NormalizedLandmark p2 = landmarks.get(end);
+
+            double x1 = p1.x() * w;
+            double y1 = p1.y() * h;
+            double x2 = p2.x() * w;
+            double y2 = p2.y() * h;
+
+            if (!isPointInside(x1, y1, w, h) || !isPointInside(x2, y2, w, h)) {
+                continue;
+            }
+
+            Imgproc.line(
+                    mat,
+                    new Point(x1, y1),
+                    new Point(x2, y2),
+                    new Scalar(0, 255, 255, 255),
+                    3
+            );
+        }
+    }
+
+    private Point landmarkToPoint(NormalizedLandmark landmark, int w, int h) {
+        return new Point(
+                landmark.x() * w,
+                landmark.y() * h
+        );
+    }
+
+    private Point midpoint(Point a, Point b) {
+        return new Point(
+                (a.x + b.x) / 2.0,
+                (a.y + b.y) / 2.0
+        );
+    }
+
+    private double distance(Point a, Point b) {
+        double dx = a.x - b.x;
+        double dy = a.y - b.y;
+
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    private boolean isPointInside(double x, double y, int w, int h) {
+        return x >= 0 && x < w && y >= 0 && y < h;
+    }
+
+    private Bitmap drawError(Bitmap source, String message) {
+        Mat mat = new Mat();
+
+        try {
+            Bitmap mutable = source.copy(Bitmap.Config.ARGB_8888, true);
+            Utils.bitmapToMat(mutable, mat);
+
+            Imgproc.rectangle(
+                    mat,
+                    new Point(0, 0),
+                    new Point(mat.cols(), 160),
+                    new Scalar(255, 255, 255, 230),
+                    -1
+            );
+
+            Imgproc.putText(
+                    mat,
+                    message,
+                    new Point(20, 65),
+                    Imgproc.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    new Scalar(0, 0, 255, 255),
+                    3
+            );
+
+            Bitmap result = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
+            Utils.matToBitmap(mat, result);
+            return result;
+
+        } catch (Exception e) {
+            return source;
+
+        } finally {
+            mat.release();
+        }
+    }
+
+    private void drawHeader(Mat mat, String text) {
+        Imgproc.rectangle(
+                mat,
+                new Point(0, 0),
+                new Point(mat.cols(), 70),
+                new Scalar(255, 255, 255, 230),
+                -1
+        );
+
+        Imgproc.putText(
+                mat,
+                text,
+                new Point(20, 48),
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                1.1,
+                new Scalar(0, 0, 255, 255),
+                3
+        );
+    }
+
+    private void drawSmallText(Mat mat, String text, Point pos) {
+        Imgproc.putText(
+                mat,
+                text,
+                pos,
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                new Scalar(255, 255, 255, 255),
+                4
+        );
+
+        Imgproc.putText(
+                mat,
+                text,
+                pos,
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                new Scalar(0, 0, 0, 255),
+                2
+        );
+    }
+
+    private Bitmap loadAndRotateBitmap(Uri imageUri) {
+        try {
+            Bitmap original = loadBitmapFromUri(imageUri);
+
+            if (original == null) {
+                return null;
+            }
+
+            return rotateBitmapIfRequired(original, imageUri);
+
+        } catch (Exception e) {
+            Log.e(TAG, "loadAndRotateBitmap error", e);
+            return null;
+        }
+    }
+
+    private Bitmap loadBitmapFromUri(Uri uri) {
+        try (InputStream inputStream = getContentResolver().openInputStream(uri)) {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+
+            return BitmapFactory.decodeStream(inputStream, null, options);
+
+        } catch (Exception e) {
+            Log.e(TAG, "loadBitmapFromUri error", e);
+            return null;
+        }
+    }
+
+    private Bitmap rotateBitmapIfRequired(Bitmap bitmap, Uri imageUri) {
+        try (InputStream inputStream = getContentResolver().openInputStream(imageUri)) {
+            if (inputStream == null) {
+                return bitmap;
+            }
+
+            ExifInterface exif = new ExifInterface(inputStream);
+
+            int orientation = exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+            );
+
+            Matrix matrix = new Matrix();
+
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_ROTATE_90:
+                    matrix.postRotate(90);
+                    break;
+
+                case ExifInterface.ORIENTATION_ROTATE_180:
+                    matrix.postRotate(180);
+                    break;
+
+                case ExifInterface.ORIENTATION_ROTATE_270:
+                    matrix.postRotate(270);
+                    break;
+
+                default:
+                    return bitmap;
+            }
+
+            return Bitmap.createBitmap(
+                    bitmap,
+                    0,
+                    0,
+                    bitmap.getWidth(),
+                    bitmap.getHeight(),
+                    matrix,
+                    true
+            );
+
+        } catch (Exception e) {
+            Log.e(TAG, "rotateBitmapIfRequired error", e);
+            return bitmap;
+        }
+    }
+
+    private void saveBitmapToAppFiles(Bitmap bitmap) {
+        try {
+            File picturesDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+
+            if (picturesDir != null && !picturesDir.exists()) {
+                picturesDir.mkdirs();
+            }
+
+            String fileName = new SimpleDateFormat(
+                    "yyyyMMdd_HHmmss",
+                    Locale.getDefault()
+            ).format(new Date());
+
+            File imageFile = new File(picturesDir, "MP_" + fileName + ".jpg");
+
+            FileOutputStream fos = new FileOutputStream(imageFile);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos);
+            fos.flush();
+            fos.close();
+
+            Log.d(TAG, "Saved MediaPipe image to: " + imageFile.getAbsolutePath());
+
+            Toast.makeText(this, "Hasil MediaPipe berhasil disimpan ke File", Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+            Log.e(TAG, "saveBitmapToAppFiles error", e);
+            Toast.makeText(this, "Gagal menyimpan hasil: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String format1(double value) {
+        return String.format(Locale.US, "%.1f", value);
+    }
+}

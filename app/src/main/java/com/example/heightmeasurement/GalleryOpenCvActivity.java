@@ -11,25 +11,16 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.Toast;
 
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.exifinterface.media.ExifInterface;
 
-import com.google.android.gms.tasks.OnFailureListener;
-import com.google.android.gms.tasks.OnSuccessListener;
-import com.google.mlkit.vision.common.InputImage;
-import com.google.mlkit.vision.pose.Pose;
-import com.google.mlkit.vision.pose.PoseDetection;
-import com.google.mlkit.vision.pose.PoseDetector;
-import com.google.mlkit.vision.pose.PoseLandmark;
-import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
-
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
+import org.opencv.calib3d.Calib3d;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
-import org.opencv.core.Scalar;
+import org.opencv.core.Rect;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.ArucoDetector;
@@ -42,49 +33,49 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
+import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 public class GalleryOpenCvActivity extends AppCompatActivity {
 
     private static final String TAG = "HEIGHT_MEASURE";
-
     private static final int MARKER_DICT = Objdetect.DICT_6X6_1000;
-
     private static final int MAX_WARP_W = 2200;
-    private static final int MAX_WARP_H = 3200;
+    private static final int MAX_WARP_H = 3600;
 
-    // Tambahan tinggi canvas bawah supaya kaki tidak kepotong setelah perspective.
-    // Catatan: tambahan ini TIDAK dipakai untuk menghitung skala tinggi.
-    private static final int EXTRA_BOTTOM_CANVAS_PX = 1000;
+    private static final double CELL_PX = 100.0;
+    private static final int OUTPUT_WIDTH_PX = 11 * 100; // 1100
 
-    private static final double MIN_VALID_HEIGHT_CM = 80.0;
-    private static final double MAX_VALID_HEIGHT_CM = 250.0;
-    private static final double MAX_ALLOWED_REF_RMSE_CM = 30.0;
-
-    // Koreksi karena ML Kit biasanya membaca titik wajah/jidat, bukan puncak kepala.
-    // Jika hasil aplikasi 10 cm lebih pendek dari stadiometer, pakai +10.0.
-    // Jika hasil aplikasi 10 cm lebih tinggi dari stadiometer, pakai -10.0.
-    private static final double HEAD_CORRECTION_CM = 16.0;
-
-    /**
-     * Marker referensi WAJIB sesuai posisi real di papan.
-     * Berdasarkan log kamu:
-     * - ID 404 ada di bawah papan
-     * - ID 143 ada di atas papan
+    /*
+     * Dinaikkan agar kaki tidak terpotong.
+     * Papan atas 8 baris = 800 px
+     * Gap antara papan ~= BOTTOM_BOARD_OFFSET_Y_PX
+     * Papan bawah 8 baris = 800 px
+     * Area kaki di bawah papan bawah ~= 600 px tambahan
      *
-     * Jika nanti layout marker berubah, ID ini harus dicek ulang dari Logcat.
+     * Total: sekitar 3200-3400 px cukup.
+     * Kalau masih kepotong, naikkan lagi.
      */
-    private static final Map<Integer, Double> REFERENCE_HEIGHTS_CM = new HashMap<>();
-    static {
-        REFERENCE_HEIGHTS_CM.put(404, 0.0);     // bawah / dekat lantai
-        REFERENCE_HEIGHTS_CM.put(143, 200.0);   // atas / tinggi papan 200 cm
-    }
+    private static final int OUTPUT_HEIGHT_PX = 3400;
+
+    /*
+     * Offset Y papan bawah di koordinat output perspective.
+     * Ini jarak dari baris pertama papan atas ke baris pertama papan bawah.
+     *
+     * WAJIB disesuaikan dengan jarak fisik papan atas ke papan bawah.
+     *
+     * Cara menghitung:
+     * - Ukur jarak dari tepi atas papan atas ke tepi atas papan bawah (cm).
+     * - Papan atas tinggi fisik = 8 baris x ukuran_cell_cm.
+     * - Kalau ukuran cell = 1 cm, papan atas = 8 cm.
+     * - Gap antara papan misalnya 4.5 cm.
+     * - Total offset = (8 + 4.5) / 1 * 100 = 1250 px.
+     *
+     * Sesuaikan sesuai papan asli kamu.
+     */
+    private static final double BOTTOM_BOARD_OFFSET_Y_PX = 1250.0;
 
     private ImageView imageViewResult;
     private Button btnPerspective;
@@ -92,18 +83,13 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
 
     private Bitmap originalBitmap;
     private Bitmap currentBitmap;
-    private Bitmap warpedBaseBitmap;
-    private Bitmap warpDebugBitmap;
-
-    private final List<MarkerData> detectedMarkers = new ArrayList<>();
-    private final List<ReferencePoint> visibleReferencePoints = new ArrayList<>();
-
-    private PoseDetector poseDetector;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_gallery_opencv);
+
+        Log.d(TAG, "=== onCreate ===");
 
         imageViewResult = findViewById(R.id.imageViewResult);
         btnPerspective = findViewById(R.id.btnPerspective);
@@ -116,12 +102,9 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             return;
         }
 
-        PoseDetectorOptions options = new PoseDetectorOptions.Builder()
-                .setDetectorMode(PoseDetectorOptions.SINGLE_IMAGE_MODE)
-                .build();
-        poseDetector = PoseDetection.getClient(options);
-
         String uriString = getIntent().getStringExtra("image_uri");
+        Log.d(TAG, "image_uri = " + uriString);
+
         if (uriString == null) {
             Toast.makeText(this, "Gambar tidak ditemukan", Toast.LENGTH_SHORT).show();
             finish();
@@ -132,15 +115,19 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         originalBitmap = loadAndRotateBitmap(imageUri);
 
         if (originalBitmap == null) {
+            Log.e(TAG, "originalBitmap null");
             Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
 
+        Log.d(TAG, "originalBitmap size = "
+                + originalBitmap.getWidth() + "x" + originalBitmap.getHeight());
+
         currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
         imageViewResult.setImageBitmap(currentBitmap);
 
-        btnPerspective.setOnClickListener(v -> runAutomaticMeasurement());
+        btnPerspective.setOnClickListener(v -> runPerspectiveOnly());
 
         btnSaveGalleryImage.setOnClickListener(v -> {
             if (currentBitmap != null) {
@@ -149,485 +136,317 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         });
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (poseDetector != null) {
-            poseDetector.close();
-        }
-    }
+    // ==================== PERSPECTIVE ONLY ====================
 
-    private void runAutomaticMeasurement() {
-        Log.d(TAG, "=== runAutomaticMeasurement START ===");
+    private void runPerspectiveOnly() {
+        Log.d(TAG, "=== runPerspectiveOnly START ===");
+
         try {
             btnPerspective.setEnabled(false);
-            warpDebugBitmap = null;
 
-            Bitmap warped = autoPerspectiveFromTwoBoards(originalBitmap);
+            Bitmap warped = autoPerspectiveFromAllBoardHomography(originalBitmap);
+
             if (warped == null) {
-                Toast.makeText(this, "Gagal auto perspective", Toast.LENGTH_SHORT).show();
-                return;
+                Log.e(TAG, "Homography failed, trying fallback TwoBoards");
+                warped = autoPerspectiveFromTwoBoards(originalBitmap);
             }
 
-            Log.d(TAG, "Warped image size = " + warped.getWidth() + " x " + warped.getHeight());
-
-            ArucoResult arucoResult = detectArucoAndDrawIds(warped);
-            if (arucoResult == null || arucoResult.markers == null || arucoResult.markers.isEmpty()) {
-                if (warpDebugBitmap != null) {
-                    currentBitmap = warpDebugBitmap;
-                    imageViewResult.setImageBitmap(currentBitmap);
-                }
-                Toast.makeText(this, "Deteksi ArUco gagal setelah perspective", Toast.LENGTH_LONG).show();
-                return;
-            }
-
-            detectedMarkers.clear();
-            detectedMarkers.addAll(arucoResult.markers);
-
-            visibleReferencePoints.clear();
-            visibleReferencePoints.addAll(extractVisibleReferencePoints(detectedMarkers));
-
-            for (ReferencePoint r : visibleReferencePoints) {
-                Log.d(TAG, "REF TERPAKAI => id=" + r.id + ", y=" + r.y + ", cm=" + r.cm);
-            }
-
-            logAllDetectedIds(detectedMarkers);
-            logReferenceIds(visibleReferencePoints);
-            logCalibrationReferenceInfo(visibleReferencePoints);
-
-            CalibrationModel calibration = buildCalibrationModel(visibleReferencePoints);
-            if (calibration == null) {
+            if (warped == null) {
+                Log.e(TAG, "All perspective methods failed");
                 Toast.makeText(this,
-                        "Kalibrasi gagal. Pastikan ID marker 404 bawah dan 143 atas terlihat.",
+                        "Gagal auto perspective. Pastikan marker terlihat jelas.",
                         Toast.LENGTH_LONG).show();
-
-                warpedBaseBitmap = arucoResult.bitmapWithIds;
-                warpedBaseBitmap = drawReferenceScaleInfo(warpedBaseBitmap, visibleReferencePoints);
-                currentBitmap = warpedBaseBitmap;
-                imageViewResult.setImageBitmap(currentBitmap);
                 return;
             }
 
-            warpedBaseBitmap = arucoResult.bitmapWithIds;
-            warpedBaseBitmap = addTimestampToBitmap(warpedBaseBitmap);
-            warpedBaseBitmap = drawReferenceScaleInfo(warpedBaseBitmap, visibleReferencePoints);
+            Log.d(TAG, "warped size = " + warped.getWidth() + "x" + warped.getHeight());
 
-            currentBitmap = warpedBaseBitmap;
+            currentBitmap = warped;
             imageViewResult.setImageBitmap(currentBitmap);
 
-            runPoseMeasurement(warpedBaseBitmap, calibration);
+            Toast.makeText(this, "Perspective berhasil", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
-            Log.e(TAG, "runAutomaticMeasurement error", e);
+            Log.e(TAG, "runPerspectiveOnly error", e);
             Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             btnPerspective.setEnabled(true);
-            Log.d(TAG, "=== runAutomaticMeasurement END ===");
+            Log.d(TAG, "=== runPerspectiveOnly END ===");
         }
     }
 
-    private void runPoseMeasurement(Bitmap bitmap, CalibrationModel calibration) {
-        try {
-            InputImage inputImage = InputImage.fromBitmap(bitmap, 0);
+    // ==================== HOMOGRAPHY ATAS + BAWAH ====================
 
-            poseDetector.process(inputImage)
-                    .addOnSuccessListener(new OnSuccessListener<Pose>() {
-                        @Override
-                        public void onSuccess(Pose pose) {
-                            PersonPoints points = extractHeadAndFootFromPose(pose);
-                            if (points == null) {
-                                Toast.makeText(GalleryOpenCvActivity.this,
-                                        "Pose tubuh tidak terdeteksi dengan baik.",
-                                        Toast.LENGTH_LONG).show();
-                                return;
-                            }
+    private Bitmap autoPerspectiveFromAllBoardHomography(Bitmap bitmap) {
+        Log.d(TAG, "=== autoPerspectiveFromAllBoardHomography START ===");
 
-                            boolean success = measureHeightFromPoints(points.head, points.foot, calibration);
-                            if (!success) {
-                                Toast.makeText(GalleryOpenCvActivity.this,
-                                        "Pengukuran tidak valid. Cek Logcat.",
-                                        Toast.LENGTH_LONG).show();
-                            }
-                        }
-                    })
-                    .addOnFailureListener(new OnFailureListener() {
-                        @Override
-                        public void onFailure(@NonNull Exception e) {
-                            Log.e(TAG, "Pose detection FAILED", e);
-                            Toast.makeText(GalleryOpenCvActivity.this,
-                                    "Pose detection gagal.",
-                                    Toast.LENGTH_LONG).show();
-                        }
-                    });
-
-        } catch (Exception e) {
-            Log.e(TAG, "runPoseMeasurement error", e);
-            Toast.makeText(this, "Pose error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private PersonPoints extractHeadAndFootFromPose(Pose pose) {
-        PoseLandmark nose = pose.getPoseLandmark(PoseLandmark.NOSE);
-        PoseLandmark leftEye = pose.getPoseLandmark(PoseLandmark.LEFT_EYE);
-        PoseLandmark rightEye = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE);
-        PoseLandmark leftEar = pose.getPoseLandmark(PoseLandmark.LEFT_EAR);
-        PoseLandmark rightEar = pose.getPoseLandmark(PoseLandmark.RIGHT_EAR);
-
-        PoseLandmark leftHeel = pose.getPoseLandmark(PoseLandmark.LEFT_HEEL);
-        PoseLandmark rightHeel = pose.getPoseLandmark(PoseLandmark.RIGHT_HEEL);
-        PoseLandmark leftFoot = pose.getPoseLandmark(PoseLandmark.LEFT_FOOT_INDEX);
-        PoseLandmark rightFoot = pose.getPoseLandmark(PoseLandmark.RIGHT_FOOT_INDEX);
-        PoseLandmark leftAnkle = pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE);
-        PoseLandmark rightAnkle = pose.getPoseLandmark(PoseLandmark.RIGHT_ANKLE);
-
-        logPoseLandmark("NOSE", nose);
-        logPoseLandmark("LEFT_EYE", leftEye);
-        logPoseLandmark("RIGHT_EYE", rightEye);
-        logPoseLandmark("LEFT_EAR", leftEar);
-        logPoseLandmark("RIGHT_EAR", rightEar);
-        logPoseLandmark("LEFT_HEEL", leftHeel);
-        logPoseLandmark("RIGHT_HEEL", rightHeel);
-        logPoseLandmark("LEFT_FOOT", leftFoot);
-        logPoseLandmark("RIGHT_FOOT", rightFoot);
-        logPoseLandmark("LEFT_ANKLE", leftAnkle);
-        logPoseLandmark("RIGHT_ANKLE", rightAnkle);
-
-        Double noseX = getLandmarkX(nose);
-        Double noseY = getLandmarkY(nose);
-
-        Double headY = minValidY(
-                getLandmarkY(nose),
-                getLandmarkY(leftEye),
-                getLandmarkY(rightEye),
-                getLandmarkY(leftEar),
-                getLandmarkY(rightEar)
-        );
-
-        Double headX = avgValidX(
-                getLandmarkX(nose),
-                getLandmarkX(leftEye),
-                getLandmarkX(rightEye),
-                getLandmarkX(leftEar),
-                getLandmarkX(rightEar)
-        );
-
-        if (headY == null) headY = noseY;
-        if (headX == null) headX = noseX;
-
-        Double footY = maxValidY(
-                getLandmarkY(leftHeel),
-                getLandmarkY(rightHeel),
-                getLandmarkY(leftFoot),
-                getLandmarkY(rightFoot),
-                getLandmarkY(leftAnkle),
-                getLandmarkY(rightAnkle)
-        );
-
-        Double footX = avgValidX(
-                getLandmarkX(leftHeel),
-                getLandmarkX(rightHeel),
-                getLandmarkX(leftFoot),
-                getLandmarkX(rightFoot),
-                getLandmarkX(leftAnkle),
-                getLandmarkX(rightAnkle)
-        );
-
-        if (footX == null) footX = headX;
-
-        if (headY == null || headX == null || footY == null) {
-            Log.e(TAG, "Pose invalid: head/foot landmark missing");
-            return null;
-        }
-
-        // ML Kit biasanya mendeteksi titik wajah/jidat, bukan puncak kepala.
-        // Nilai 60 px ini bisa kamu tuning 50-80 tergantung jarak kamera.
-        // Koreksi kecil dari titik wajah/jidat ke arah puncak kepala.
-        // Jangan pakai offset pixel terlalu besar karena tidak stabil antar foto.
-        headY = Math.max(0.0, headY - 60.0);
-
-        if (footY <= headY) {
-            Log.e(TAG, "Pose invalid: footY <= headY");
-            return null;
-        }
-
-        return new PersonPoints(new Point(headX, headY), new Point(footX, footY));
-    }
-
-    private boolean measureHeightFromPoints(Point headPoint, Point footPoint, CalibrationModel calibration) {
-        if (calibration == null) {
-            Log.e(TAG, "measureHeightFromPoints failed: calibration null");
-            return false;
-        }
-
-        double headCm = calibration.a * headPoint.y + calibration.b;
-        double footCm = calibration.a * footPoint.y + calibration.b;
-
-        // Koreksi akhir dalam satuan cm agar bisa disesuaikan dengan stadiometer.
-        // Ini lebih stabil daripada menggeser titik kepala ratusan pixel.
-        headCm = headCm + HEAD_CORRECTION_CM;
-
-        // Karena warp memakai EXTRA_BOTTOM_CANVAS_PX agar kaki tidak kepotong,
-        // titik kaki bisa jatuh ke area tambahan di bawah marker 0 cm.
-        // Secara fisik, kaki/lantai tidak boleh di bawah 0 cm, jadi kunci ke 0.
-        if (footCm < 0.0) {
-            Log.d(TAG, "footCm dikunci ke lantai 0 cm, nilai awal=" + footCm);
-            footCm = 0.0;
-        }
-
-        // Kepala juga tidak boleh lebih tinggi dari batas papan 200 cm.
-        if (headCm > 200.0) {
-            Log.d(TAG, "headCm dikunci ke batas atas 200 cm, nilai awal=" + headCm);
-            headCm = 200.0;
-        }
-
-        double heightCm = Math.abs(footCm - headCm);
-
-        Log.d(TAG, "===== FINAL HEIGHT FROM REFERENCE MARKERS =====");
-        Log.d(TAG, "headY=" + headPoint.y + ", headCm=" + headCm);
-        Log.d(TAG, "footY=" + footPoint.y + ", footCm=" + footCm);
-        Log.d(TAG, "heightCm=" + heightCm);
-
-        currentBitmap = drawMeasurementOnBitmap(warpedBaseBitmap, headPoint, footPoint, heightCm);
-        imageViewResult.setImageBitmap(currentBitmap);
-
-        if (heightCm < MIN_VALID_HEIGHT_CM || heightCm > MAX_VALID_HEIGHT_CM) {
-            String msg = "height out of range = " + format1(heightCm) + " cm";
-            Log.e(TAG, msg);
-            currentBitmap = drawDebugPointsOnBitmap(currentBitmap, headPoint, footPoint, msg);
-            imageViewResult.setImageBitmap(currentBitmap);
-            Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
-            return false;
-        }
-
-        Toast.makeText(this, "Tinggi = " + format1(heightCm) + " cm", Toast.LENGTH_LONG).show();
-        return true;
-    }
-
-    private CalibrationModel buildCalibrationModel(List<ReferencePoint> refs) {
-        Log.d(TAG, "=== buildCalibrationModel START ===");
-
-        if (refs == null || refs.size() < 2) {
-            Log.e(TAG, "Calibration failed: refs < 2");
-            return null;
-        }
-
-        List<ReferencePoint> sortedRefs = new ArrayList<>(refs);
-        sortedRefs.sort(Comparator.comparingDouble(o -> o.y));
-
-        for (ReferencePoint r : sortedRefs) {
-            Log.d(TAG, "REF original => id=" + r.id + ", y=" + r.y + ", cm=" + r.cm);
-        }
-
-        double sumY = 0.0;
-        double sumCm = 0.0;
-        double sumYY = 0.0;
-        double sumYCm = 0.0;
-        int n = sortedRefs.size();
-
-        for (ReferencePoint r : sortedRefs) {
-            sumY += r.y;
-            sumCm += r.cm;
-            sumYY += r.y * r.y;
-            sumYCm += r.y * r.cm;
-        }
-
-        double denom = n * sumYY - sumY * sumY;
-        if (Math.abs(denom) < 1e-6) {
-            Log.e(TAG, "Calibration failed: denominator too small");
-            return null;
-        }
-
-        double a = (n * sumYCm - sumY * sumCm) / denom;
-        double b = (sumCm - a * sumY) / n;
-
-        double rmse = 0.0;
-        double minCm = Double.MAX_VALUE;
-        double maxCm = -Double.MAX_VALUE;
-        double minY = Double.MAX_VALUE;
-        double maxY = -Double.MAX_VALUE;
-
-        for (ReferencePoint r : sortedRefs) {
-            double pred = a * r.y + b;
-            double err = pred - r.cm;
-            rmse += err * err;
-
-            minCm = Math.min(minCm, r.cm);
-            maxCm = Math.max(maxCm, r.cm);
-            minY = Math.min(minY, r.y);
-            maxY = Math.max(maxY, r.y);
-        }
-        rmse = Math.sqrt(rmse / n);
-
-        Log.d(TAG, "Calibration a=" + a + " b=" + b + " rmse=" + rmse);
-        Log.d(TAG, "Calibration diffY=" + Math.abs(maxY - minY));
-        Log.d(TAG, "Calibration diffCm=" + Math.abs(maxCm - minCm));
-
-        double cmPerPx = Math.abs(a);
-        double ySpan = Math.abs(maxY - minY);
-        double cmSpan = Math.abs(maxCm - minCm);
-
-        // Berdasarkan log yang benar, 404 bawah dan 143 atas harus punya ySpan besar.
-        // Jika ySpan kecil, berarti marker referensi salah atau salah posisi.
-        if (cmPerPx < 0.03 || cmPerPx > 0.12) {
-            Log.e(TAG, "Calibration failed: cmPerPx tidak masuk akal = " + cmPerPx);
-            return null;
-        }
-
-        if (ySpan < 1500.0) {
-            Log.e(TAG, "Calibration failed: marker atas-bawah terlalu dekat, ySpan=" + ySpan);
-            return null;
-        }
-
-        if (cmSpan < 150.0) {
-            Log.e(TAG, "Calibration failed: cmSpan kurang besar = " + cmSpan);
-            return null;
-        }
-
-        if (rmse > MAX_ALLOWED_REF_RMSE_CM) {
-            Log.e(TAG, "Calibration failed: rmse terlalu besar = " + rmse);
-            return null;
-        }
-
-        Log.d(TAG, "Calibration VALID, cmPerPx=" + cmPerPx);
-        Log.d(TAG, "=== buildCalibrationModel END ===");
-        return new CalibrationModel(a, b, minCm, maxCm);
-    }
-
-    private ArucoResult detectArucoAndDrawIds(Bitmap bitmap) {
-        Mat mat = new Mat();
+        Mat srcMat = new Mat();
         Mat gray = new Mat();
+        Mat warped = new Mat();
         Mat ids = new Mat();
         List<Mat> corners = new ArrayList<>();
         List<Mat> rejected = new ArrayList<>();
+        MatOfPoint2f srcPoints = null;
+        MatOfPoint2f dstPoints = null;
+        Mat H = new Mat();
 
         try {
-            Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-            Utils.bitmapToMat(mutableBitmap, mat);
+            Utils.bitmapToMat(bitmap, srcMat);
 
-            if (mat.channels() == 4) {
-                Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY);
-            } else if (mat.channels() == 3) {
-                Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY);
+            if (srcMat.channels() == 4) {
+                Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_RGBA2GRAY);
+            } else if (srcMat.channels() == 3) {
+                Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_BGR2GRAY);
             } else {
-                gray = mat.clone();
+                gray = srcMat.clone();
             }
 
             Imgproc.equalizeHist(gray, gray);
 
             Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
             DetectorParameters parameters = createArucoDetectorParameters();
-
             ArucoDetector detector = new ArucoDetector(dictionary, parameters);
             detector.detectMarkers(gray, corners, ids, rejected);
 
-            List<MarkerData> markers = new ArrayList<>();
-
-            if (!ids.empty()) {
-                for (int i = 0; i < ids.rows(); i++) {
-                    int id = (int) ids.get(i, 0)[0];
-                    Mat cornerMat = corners.get(i);
-
-                    double[] xy0 = cornerMat.get(0, 0);
-                    double[] xy1 = cornerMat.get(0, 1);
-                    double[] xy2 = cornerMat.get(0, 2);
-                    double[] xy3 = cornerMat.get(0, 3);
-
-                    Point p0 = new Point(xy0[0], xy0[1]);
-                    Point p1 = new Point(xy1[0], xy1[1]);
-                    Point p2 = new Point(xy2[0], xy2[1]);
-                    Point p3 = new Point(xy3[0], xy3[1]);
-
-                    double s1 = distance(p0, p1);
-                    double s2 = distance(p1, p2);
-                    double s3 = distance(p2, p3);
-                    double s4 = distance(p3, p0);
-                    double avgSide = (s1 + s2 + s3 + s4) / 4.0;
-
-                    MarkerData marker = new MarkerData(id, p0, p1, p2, p3, avgSide);
-                    markers.add(marker);
-                    drawMarker(mat, marker);
-
-                    Log.d(TAG, String.format(
-                            Locale.US,
-                            "Detected marker id=%d center=(%.2f, %.2f) avgSide=%.2f px",
-                            id, marker.getCenter().x, marker.getCenter().y, marker.avgSidePx
-                    ));
-                }
-            } else {
-                Log.e(TAG, "Aruco ids empty");
+            if (ids.empty()) {
+                Log.e(TAG, "No ArUco detected");
+                return null;
             }
 
-            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(mat, resultBitmap);
+            List<Point> imagePoints = new ArrayList<>();
+            List<Point> worldPoints = new ArrayList<>();
 
-            return new ArucoResult(resultBitmap, markers);
+            int topCount = 0;
+            int bottomCount = 0;
+
+            for (int i = 0; i < ids.rows(); i++) {
+                int id = (int) ids.get(i, 0)[0];
+
+                Point worldCenter = lookupBoardCenterPx(id);
+                if (worldCenter == null) {
+                    Log.d(TAG, "Skipping unknown board ID: " + id);
+                    continue;
+                }
+
+                Mat c = corners.get(i);
+                double[] xy0 = c.get(0, 0);
+                double[] xy1 = c.get(0, 1);
+                double[] xy2 = c.get(0, 2);
+                double[] xy3 = c.get(0, 3);
+
+                double cx = (xy0[0] + xy1[0] + xy2[0] + xy3[0]) / 4.0;
+                double cy = (xy0[1] + xy1[1] + xy2[1] + xy3[1]) / 4.0;
+
+                imagePoints.add(new Point(cx, cy));
+                worldPoints.add(worldCenter);
+
+                if (id >= 100 && id < 200) topCount++;
+                if (id >= 400 && id < 500) bottomCount++;
+
+                Log.d(TAG, "H point id=" + id
+                        + " image=(" + cx + "," + cy + ")"
+                        + " world=(" + worldCenter.x + "," + worldCenter.y + ")");
+            }
+
+            Log.d(TAG, "Homography points total=" + imagePoints.size()
+                    + " top=" + topCount + " bottom=" + bottomCount);
+
+            if (imagePoints.size() < 4) {
+                Log.e(TAG, "Not enough markers for homography: " + imagePoints.size());
+                return null;
+            }
+
+            srcPoints = new MatOfPoint2f(imagePoints.toArray(new Point[0]));
+            dstPoints = new MatOfPoint2f(worldPoints.toArray(new Point[0]));
+
+            H = Calib3d.findHomography(srcPoints, dstPoints, Calib3d.RANSAC, 5.0);
+
+            if (H.empty()) {
+                Log.e(TAG, "findHomography failed");
+                return null;
+            }
+
+            Imgproc.warpPerspective(
+                    srcMat,
+                    warped,
+                    H,
+                    new Size(OUTPUT_WIDTH_PX, OUTPUT_HEIGHT_PX)
+            );
+
+            Bitmap result = Bitmap.createBitmap(
+                    warped.cols(), warped.rows(), Bitmap.Config.ARGB_8888
+            );
+            Utils.matToBitmap(warped, result);
+
+            Log.d(TAG, "=== autoPerspectiveFromAllBoardHomography END ===");
+            return result;
 
         } catch (Exception e) {
-            Log.e(TAG, "detectArucoAndDrawIds error", e);
+            Log.e(TAG, "autoPerspectiveFromAllBoardHomography error", e);
             return null;
         } finally {
             for (Mat c : corners) c.release();
             for (Mat r : rejected) r.release();
+            if (srcPoints != null) srcPoints.release();
+            if (dstPoints != null) dstPoints.release();
+            H.release();
             ids.release();
             gray.release();
-            mat.release();
+            srcMat.release();
+            warped.release();
         }
     }
 
-    private List<ReferencePoint> extractVisibleReferencePoints(List<MarkerData> markers) {
-        List<ReferencePoint> refs = new ArrayList<>();
+    // ==================== LOOKUP KOORDINAT MARKER ====================
 
-        for (MarkerData m : markers) {
-            if (REFERENCE_HEIGHTS_CM.containsKey(m.id)) {
-                Double refCm = REFERENCE_HEIGHTS_CM.get(m.id);
-                refs.add(new ReferencePoint(
-                        m.id,
-                        m.getCenter().y,
-                        refCm,
-                        m.getCenter()
-                ));
-            }
+    private Point lookupBoardCenterPx(int id) {
+        if (id >= 100 && id < 200) {
+            return lookupTopBoardCenterPx(id);
         }
-
-        refs.sort(Comparator.comparingDouble(o -> o.y));
-        return refs;
+        if (id >= 400 && id < 500) {
+            return lookupBottomBoardCenterPx(id);
+        }
+        return null;
     }
 
-    private void drawMarker(Mat mat, MarkerData marker) {
-        Imgproc.line(mat, marker.p0, marker.p1, new Scalar(0, 255, 0, 255), 3);
-        Imgproc.line(mat, marker.p1, marker.p2, new Scalar(0, 255, 0, 255), 3);
-        Imgproc.line(mat, marker.p2, marker.p3, new Scalar(0, 255, 0, 255), 3);
-        Imgproc.line(mat, marker.p3, marker.p0, new Scalar(0, 255, 0, 255), 3);
-
-        Point center = marker.getCenter();
-        Imgproc.circle(mat, center, 6, new Scalar(0, 0, 255, 255), -1);
-
-        String label = "ID:" + marker.id;
-        if (REFERENCE_HEIGHTS_CM.containsKey(marker.id)) {
-            label += " REF(" + format1(REFERENCE_HEIGHTS_CM.get(marker.id)) + "cm)";
-        }
-
-        putOutlinedTextMat(
-                mat,
-                label,
-                new Point(marker.p0.x + 5, Math.max(30, marker.p0.y - 10)),
-                0.6,
-                new Scalar(255, 255, 255, 255),
-                new Scalar(20, 40, 70, 255)
+    private Point lookupTopBoardCenterPx(int id) {
+        Integer[] rc = lookupTopBoardRowCol(id);
+        if (rc == null) return null;
+        return new Point(
+                (rc[1] + 0.5) * CELL_PX,
+                (rc[0] + 0.5) * CELL_PX
         );
     }
+
+    private Point lookupBottomBoardCenterPx(int id) {
+        Integer[] rc = lookupBottomBoardRowCol(id);
+        if (rc == null) return null;
+        return new Point(
+                (rc[1] + 0.5) * CELL_PX,
+                BOTTOM_BOARD_OFFSET_Y_PX + (rc[0] + 0.5) * CELL_PX
+        );
+    }
+
+    // Layout papan atas
+    private Integer[] lookupTopBoardRowCol(int id) {
+        switch (id) {
+            case 103: return new Integer[]{0, 0};
+            case 115: return new Integer[]{0, 2};
+            case 123: return new Integer[]{0, 4};
+            case 131: return new Integer[]{0, 6};
+            case 139: return new Integer[]{0, 8};
+            case 143: return new Integer[]{0, 10};
+
+            case 107: return new Integer[]{1, 1};
+            case 111: return new Integer[]{1, 3};
+            case 119: return new Integer[]{1, 5};
+            case 127: return new Integer[]{1, 7};
+            case 135: return new Integer[]{1, 9};
+
+            case 102: return new Integer[]{2, 0};
+            case 114: return new Integer[]{2, 2};
+            case 122: return new Integer[]{2, 4};
+            case 130: return new Integer[]{2, 6};
+            case 138: return new Integer[]{2, 8};
+            case 142: return new Integer[]{2, 10};
+
+            case 106: return new Integer[]{3, 1};
+            case 110: return new Integer[]{3, 3};
+            case 118: return new Integer[]{3, 5};
+            case 126: return new Integer[]{3, 7};
+            case 134: return new Integer[]{3, 9};
+
+            case 101: return new Integer[]{4, 0};
+            case 113: return new Integer[]{4, 2};
+            case 121: return new Integer[]{4, 4};
+            case 129: return new Integer[]{4, 6};
+            case 137: return new Integer[]{4, 8};
+            case 141: return new Integer[]{4, 10};
+
+            case 105: return new Integer[]{5, 1};
+            case 109: return new Integer[]{5, 3};
+            case 117: return new Integer[]{5, 5};
+            case 125: return new Integer[]{5, 7};
+            case 133: return new Integer[]{5, 9};
+
+            case 100: return new Integer[]{6, 0};
+            case 112: return new Integer[]{6, 2};
+            case 120: return new Integer[]{6, 4};
+            case 128: return new Integer[]{6, 6};
+            case 136: return new Integer[]{6, 8};
+            case 140: return new Integer[]{6, 10};
+
+            case 104: return new Integer[]{7, 1};
+            case 108: return new Integer[]{7, 3};
+            case 116: return new Integer[]{7, 5};
+            case 124: return new Integer[]{7, 7};
+            case 132: return new Integer[]{7, 9};
+
+            default: return null;
+        }
+    }
+
+    // Layout papan bawah — WAJIB cocokkan dengan papan asli
+    private Integer[] lookupBottomBoardRowCol(int id) {
+        switch (id) {
+            case 403: return new Integer[]{0, 0};
+            case 435: return new Integer[]{0, 10};
+
+            case 439: return new Integer[]{1, 10};
+
+            case 402: return new Integer[]{2, 0};
+            case 434: return new Integer[]{2, 10};
+
+            case 438: return new Integer[]{3, 10};
+
+            case 401: return new Integer[]{4, 0};
+            case 433: return new Integer[]{4, 10};
+
+            case 400: return new Integer[]{5, 0};
+            case 405: return new Integer[]{5, 2};
+            case 429: return new Integer[]{5, 8};
+            case 437: return new Integer[]{5, 10};
+
+            case 404: return new Integer[]{6, 2};
+            case 432: return new Integer[]{6, 8};
+
+            case 428: return new Integer[]{7, 8};
+            case 436: return new Integer[]{7, 10};
+
+            default: return null;
+        }
+    }
+
+    // ==================== ARUCO PARAMETERS ====================
+
+    private DetectorParameters createArucoDetectorParameters() {
+        DetectorParameters parameters = new DetectorParameters();
+        parameters.set_adaptiveThreshWinSizeMin(3);
+        parameters.set_adaptiveThreshWinSizeMax(53);
+        parameters.set_adaptiveThreshWinSizeStep(4);
+        parameters.set_minMarkerPerimeterRate(0.005);
+        parameters.set_maxMarkerPerimeterRate(4.0);
+        parameters.set_polygonalApproxAccuracyRate(0.08);
+        parameters.set_minCornerDistanceRate(0.005);
+        parameters.set_minDistanceToBorder(1);
+        parameters.set_cornerRefinementMethod(1);
+        parameters.set_cornerRefinementWinSize(7);
+        parameters.set_cornerRefinementMaxIterations(80);
+        parameters.set_cornerRefinementMinAccuracy(0.01);
+        return parameters;
+    }
+
+    // ==================== FALLBACK: BOUNDING BOX DUA PAPAN ====================
 
     private Bitmap autoPerspectiveFromTwoBoards(Bitmap bitmap) {
         Log.d(TAG, "=== autoPerspectiveFromTwoBoards START ===");
 
         Mat srcMat = new Mat();
         Mat gray = new Mat();
-        Mat debugMat = new Mat();
         Mat warped = new Mat();
 
         try {
             Utils.bitmapToMat(bitmap, srcMat);
-            srcMat.copyTo(debugMat);
 
             if (srcMat.channels() == 4) {
                 Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_RGBA2GRAY);
@@ -648,16 +467,6 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Point br = boardCorners[2];
             Point bl = boardCorners[3];
 
-            Log.d(TAG, String.format(
-                    Locale.US,
-                    "FINAL WARP POINTS => TL=(%.2f, %.2f), TR=(%.2f, %.2f), BR=(%.2f, %.2f), BL=(%.2f, %.2f)",
-                    tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
-            ));
-
-            drawWarpPoints(debugMat, tl, tr, br, bl);
-            warpDebugBitmap = Bitmap.createBitmap(debugMat.cols(), debugMat.rows(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(debugMat, warpDebugBitmap);
-
             double widthTop = distance(tl, tr);
             double widthBottom = distance(bl, br);
             double maxWidth = Math.max(widthTop, widthBottom);
@@ -671,17 +480,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     (double) MAX_WARP_H / Math.max(1.0, maxHeight)
             );
 
-            maxWidth = Math.round(maxWidth * scale);
-            maxHeight = Math.round(maxHeight * scale);
-
-            maxWidth = Math.max(900, maxWidth);
-            maxHeight = Math.max(1600, maxHeight);
-
-            Log.d(TAG, String.format(
-                    Locale.US,
-                    "Warp size target = %.2f px x %.2f px + bottomExtra=%d px",
-                    maxWidth, maxHeight, EXTRA_BOTTOM_CANVAS_PX
-            ));
+            if (scale < 1.0) {
+                maxWidth = Math.max(800, Math.round(maxWidth * scale));
+                maxHeight = Math.max(1600, Math.round(maxHeight * scale));
+            }
 
             MatOfPoint2f srcPoints = new MatOfPoint2f(tl, tr, br, bl);
             MatOfPoint2f dstPoints = new MatOfPoint2f(
@@ -692,15 +494,11 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             );
 
             Mat H = Imgproc.getPerspectiveTransform(srcPoints, dstPoints);
+            Imgproc.warpPerspective(srcMat, warped, H, new Size(maxWidth, maxHeight));
 
-            Imgproc.warpPerspective(
-                    srcMat,
-                    warped,
-                    H,
-                    new Size(maxWidth, maxHeight + EXTRA_BOTTOM_CANVAS_PX)
+            Bitmap result = Bitmap.createBitmap(
+                    warped.cols(), warped.rows(), Bitmap.Config.ARGB_8888
             );
-
-            Bitmap result = Bitmap.createBitmap(warped.cols(), warped.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(warped, result);
 
             srcPoints.release();
@@ -714,9 +512,8 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
             Log.e(TAG, "autoPerspectiveFromTwoBoards error", e);
             return null;
         } finally {
-            srcMat.release();
             gray.release();
-            debugMat.release();
+            srcMat.release();
             warped.release();
         }
     }
@@ -731,16 +528,16 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         try {
             Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
             DetectorParameters parameters = createArucoDetectorParameters();
-
             ArucoDetector detector = new ArucoDetector(dictionary, parameters);
             detector.detectMarkers(gray, corners, ids, rejected);
 
             if (ids.empty() || corners.size() < 8) {
-                Log.e(TAG, "detectTwoBoardCorners failed: ids empty or too few markers");
+                Log.e(TAG, "detectTwoBoardCorners failed: not enough markers");
                 return null;
             }
 
-            List<Point> allPts = new ArrayList<>();
+            List<Point> centers = new ArrayList<>();
+            double avgMarkerSide = 0.0;
 
             for (Mat cornerMat : corners) {
                 double[] xy0 = cornerMat.get(0, 0);
@@ -748,63 +545,81 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                 double[] xy2 = cornerMat.get(0, 2);
                 double[] xy3 = cornerMat.get(0, 3);
 
-                allPts.add(new Point(xy0[0], xy0[1]));
-                allPts.add(new Point(xy1[0], xy1[1]));
-                allPts.add(new Point(xy2[0], xy2[1]));
-                allPts.add(new Point(xy3[0], xy3[1]));
+                double cx = (xy0[0] + xy1[0] + xy2[0] + xy3[0]) / 4.0;
+                double cy = (xy0[1] + xy1[1] + xy2[1] + xy3[1]) / 4.0;
+                centers.add(new Point(cx, cy));
+
+                double s1 = distance(new Point(xy0[0], xy0[1]), new Point(xy1[0], xy1[1]));
+                double s2 = distance(new Point(xy1[0], xy1[1]), new Point(xy2[0], xy2[1]));
+                double s3 = distance(new Point(xy2[0], xy2[1]), new Point(xy3[0], xy3[1]));
+                double s4 = distance(new Point(xy3[0], xy3[1]), new Point(xy0[0], xy0[1]));
+                avgMarkerSide += (s1 + s2 + s3 + s4) / 4.0;
             }
 
-            Point tl = null;
-            Point tr = null;
-            Point br = null;
-            Point bl = null;
+            avgMarkerSide /= Math.max(1, corners.size());
 
-            double minSum = Double.MAX_VALUE;
-            double maxSum = -Double.MAX_VALUE;
-            double minDiff = Double.MAX_VALUE;
-            double maxDiff = -Double.MAX_VALUE;
+            int sidePad = Math.max(80, (int) Math.round(avgMarkerSide * 1.2));
+            int topPad = Math.max(60, (int) Math.round(avgMarkerSide * 0.8));
+            int bottomPad = Math.max(380, (int) Math.round(avgMarkerSide * 5.0));
 
-            for (Point p : allPts) {
-                double sum = p.x + p.y;
-                double diff = p.x - p.y;
+            double medianY = computeMedianY(centers);
 
-                if (sum < minSum) {
-                    minSum = sum;
-                    tl = p;
-                }
-                if (sum > maxSum) {
-                    maxSum = sum;
-                    br = p;
-                }
-                if (diff > maxDiff) {
-                    maxDiff = diff;
-                    tr = p;
-                }
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    bl = p;
+            List<Point> topPoints = new ArrayList<>();
+            List<Point> bottomPoints = new ArrayList<>();
+
+            for (Mat cornerMat : corners) {
+                double[] xy0 = cornerMat.get(0, 0);
+                double[] xy1 = cornerMat.get(0, 1);
+                double[] xy2 = cornerMat.get(0, 2);
+                double[] xy3 = cornerMat.get(0, 3);
+
+                double cy = (xy0[1] + xy1[1] + xy2[1] + xy3[1]) / 4.0;
+
+                if (cy < medianY) {
+                    topPoints.add(new Point(xy0[0], xy0[1]));
+                    topPoints.add(new Point(xy1[0], xy1[1]));
+                    topPoints.add(new Point(xy2[0], xy2[1]));
+                    topPoints.add(new Point(xy3[0], xy3[1]));
+                } else {
+                    bottomPoints.add(new Point(xy0[0], xy0[1]));
+                    bottomPoints.add(new Point(xy1[0], xy1[1]));
+                    bottomPoints.add(new Point(xy2[0], xy2[1]));
+                    bottomPoints.add(new Point(xy3[0], xy3[1]));
                 }
             }
 
-            if (tl == null || tr == null || br == null || bl == null) {
-                Log.e(TAG, "Failed finding board corners");
+            if (topPoints.size() < 4 || bottomPoints.size() < 4) {
+                Log.e(TAG, "topPoints or bottomPoints < 4");
                 return null;
             }
 
-            double pad = 30.0;
+            Rect topRect = boundingRectCustom(
+                    topPoints, sidePad, topPad, sidePad, sidePad,
+                    gray.cols(), gray.rows()
+            );
 
-            tl = new Point(Math.max(0, tl.x - pad), Math.max(0, tl.y - pad));
-            tr = new Point(Math.min(gray.cols() - 1, tr.x + pad), Math.max(0, tr.y - pad));
-            br = new Point(Math.min(gray.cols() - 1, br.x + pad), Math.min(gray.rows() - 1, br.y + pad));
-            bl = new Point(Math.max(0, bl.x - pad), Math.min(gray.rows() - 1, bl.y + pad));
+            Rect bottomRect = boundingRectCustom(
+                    bottomPoints, sidePad, sidePad, sidePad, bottomPad,
+                    gray.cols(), gray.rows()
+            );
 
-            Log.d(TAG, String.format(
-                    Locale.US,
-                    "Corners => tl=(%.2f, %.2f), tr=(%.2f, %.2f), br=(%.2f, %.2f), bl=(%.2f, %.2f)",
-                    tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
-            ));
+            if (topRect == null || bottomRect == null) {
+                Log.e(TAG, "topRect or bottomRect null");
+                return null;
+            }
+
+            Point tl = new Point(topRect.x, topRect.y);
+            Point tr = new Point(topRect.x + topRect.width, topRect.y);
+            Point br = new Point(
+                    bottomRect.x + bottomRect.width,
+                    bottomRect.y + bottomRect.height
+            );
+            Point bl = new Point(
+                    bottomRect.x,
+                    bottomRect.y + bottomRect.height
+            );
+
             Log.d(TAG, "=== detectTwoBoardCorners END ===");
-
             return new Point[]{tl, tr, br, bl};
 
         } catch (Exception e) {
@@ -817,266 +632,53 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         }
     }
 
-    private void drawWarpPoints(Mat mat, Point tl, Point tr, Point br, Point bl) {
-        Imgproc.circle(mat, tl, 18, new Scalar(255, 0, 0, 255), -1);
-        Imgproc.circle(mat, tr, 18, new Scalar(0, 255, 0, 255), -1);
-        Imgproc.circle(mat, br, 18, new Scalar(0, 0, 255, 255), -1);
-        Imgproc.circle(mat, bl, 18, new Scalar(255, 255, 0, 255), -1);
+    // ==================== UTILITY ====================
 
-        putOutlinedTextMat(mat, "TL", new Point(tl.x + 20, tl.y + 30), 1.0,
-                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
-        putOutlinedTextMat(mat, "TR", new Point(tr.x - 100, tr.y + 30), 1.0,
-                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
-        putOutlinedTextMat(mat, "BR", new Point(br.x - 100, br.y - 30), 1.0,
-                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
-        putOutlinedTextMat(mat, "BL", new Point(bl.x + 20, bl.y - 30), 1.0,
-                new Scalar(255, 255, 255, 255), new Scalar(0, 0, 0, 255));
-
-        Log.d(TAG, "DRAW WARP POINT TL = " + tl.x + ", " + tl.y);
-        Log.d(TAG, "DRAW WARP POINT TR = " + tr.x + ", " + tr.y);
-        Log.d(TAG, "DRAW WARP POINT BR = " + br.x + ", " + br.y);
-        Log.d(TAG, "DRAW WARP POINT BL = " + bl.x + ", " + bl.y);
+    private double computeMedianY(List<Point> points) {
+        List<Double> ys = new ArrayList<>();
+        for (Point p : points) ys.add(p.y);
+        Collections.sort(ys);
+        int n = ys.size();
+        if (n == 0) return 0;
+        if (n % 2 == 1) return ys.get(n / 2);
+        return (ys.get(n / 2 - 1) + ys.get(n / 2)) / 2.0;
     }
 
-    private DetectorParameters createArucoDetectorParameters() {
-        DetectorParameters parameters = new DetectorParameters();
-        parameters.set_adaptiveThreshWinSizeMin(3);
-        parameters.set_adaptiveThreshWinSizeMax(53);
-        parameters.set_adaptiveThreshWinSizeStep(4);
-        parameters.set_minMarkerPerimeterRate(0.005);
-        parameters.set_maxMarkerPerimeterRate(4.0);
-        parameters.set_polygonalApproxAccuracyRate(0.08);
-        parameters.set_minCornerDistanceRate(0.005);
-        parameters.set_minDistanceToBorder(1);
-        parameters.set_cornerRefinementMethod(1);
-        parameters.set_cornerRefinementWinSize(7);
-        parameters.set_cornerRefinementMaxIterations(80);
-        parameters.set_cornerRefinementMinAccuracy(0.01);
-        return parameters;
-    }
+    private Rect boundingRectCustom(
+            List<Point> pts,
+            int leftPad, int topPad,
+            int rightPad, int bottomPad,
+            int imageW, int imageH
+    ) {
+        if (pts == null || pts.isEmpty()) return null;
 
-    private Bitmap drawMeasurementOnBitmap(Bitmap bitmap, Point head, Point foot, double heightCm) {
-        try {
-            Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-            Mat mat = new Mat();
-            Utils.bitmapToMat(mutableBitmap, mat);
+        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE;
+        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
 
-            // Titik kepala dan kaki saja, tanpa garis.
-            Imgproc.circle(mat, head, 12, new Scalar(0, 0, 255, 255), -1);
-            Imgproc.circle(mat, foot, 12, new Scalar(255, 0, 0, 255), -1);
-
-            putHeaderText(mat, "HASIL PENGUKURAN");
-            putHeaderText2(mat, "TINGGI BADAN: " + format1(heightCm) + " cm");
-
-            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(mat, resultBitmap);
-            mat.release();
-            return resultBitmap;
-
-        } catch (Exception e) {
-            Log.e(TAG, "drawMeasurementOnBitmap error", e);
-            return bitmap;
+        for (Point p : pts) {
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
         }
+
+        int x1 = Math.max(0, (int) Math.floor(minX) - leftPad);
+        int y1 = Math.max(0, (int) Math.floor(minY) - topPad);
+        int x2 = Math.min(imageW - 1, (int) Math.ceil(maxX) + rightPad);
+        int y2 = Math.min(imageH - 1, (int) Math.ceil(maxY) + bottomPad);
+
+        int w = x2 - x1;
+        int h = y2 - y1;
+        if (w <= 0 || h <= 0) return null;
+
+        return new Rect(x1, y1, w, h);
     }
 
-    private Bitmap drawDebugPointsOnBitmap(Bitmap bitmap, Point head, Point foot, String message) {
-        try {
-            Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-            Mat mat = new Mat();
-            Utils.bitmapToMat(mutableBitmap, mat);
-
-            Imgproc.circle(mat, head, 14, new Scalar(0, 0, 255, 255), -1);
-            Imgproc.circle(mat, foot, 14, new Scalar(255, 0, 0, 255), -1);
-
-            putOutlinedTextMat(
-                    mat,
-                    "DEBUG: " + message,
-                    new Point(40, Math.max(80, mat.rows() - 140)),
-                    0.8,
-                    new Scalar(255, 255, 255, 255),
-                    new Scalar(0, 0, 0, 255)
-            );
-
-            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(mat, resultBitmap);
-            mat.release();
-            return resultBitmap;
-
-        } catch (Exception e) {
-            Log.e(TAG, "drawDebugPointsOnBitmap error", e);
-            return bitmap;
-        }
+    private double distance(Point p1, Point p2) {
+        return Math.hypot(p1.x - p2.x, p1.y - p2.y);
     }
 
-    private Bitmap drawReferenceScaleInfo(Bitmap bitmap, List<ReferencePoint> refs) {
-        try {
-            Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-            Mat mat = new Mat();
-            Utils.bitmapToMat(mutableBitmap, mat);
-
-            putOutlinedTextMat(
-                    mat,
-                    "REF COUNT: " + refs.size(),
-                    new Point(30, 50),
-                    0.9,
-                    new Scalar(255, 255, 255, 255),
-                    new Scalar(0, 0, 0, 255)
-            );
-
-            for (ReferencePoint ref : refs) {
-                putOutlinedTextMat(
-                        mat,
-                        "ID: " + ref.id + " (H: " + format1(ref.cm) + "cm)",
-                        new Point(ref.center.x + 30, ref.center.y),
-                        0.7,
-                        new Scalar(255, 255, 255, 255),
-                        new Scalar(20, 40, 70, 255)
-                );
-            }
-
-            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(mat, resultBitmap);
-            mat.release();
-            return resultBitmap;
-
-        } catch (Exception e) {
-            Log.e(TAG, "drawReferenceScaleInfo error", e);
-            return bitmap;
-        }
-    }
-
-    private void putHeaderText(Mat mat, String text) {
-        // Judul hasil pengukuran dibuat lebih besar dan merah supaya tidak menyaru.
-        Point pos = new Point(mat.cols() * 0.08, 95);
-
-        Imgproc.rectangle(
-                mat,
-                new Point(pos.x - 28, pos.y - 65),
-                new Point(pos.x + 900, pos.y + 32),
-                new Scalar(255, 255, 255, 230),
-                -1
-        );
-
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
-                new Scalar(255, 255, 255, 255), 9);
-
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
-                new Scalar(255, 0, 0, 255), 5);
-    }
-
-    private void putHeaderText2(Mat mat, String text) {
-        // Angka tinggi dibuat lebih besar dan merah.
-        Point pos = new Point(mat.cols() * 0.08, 170);
-
-        Imgproc.rectangle(
-                mat,
-                new Point(pos.x - 28, pos.y - 58),
-                new Point(pos.x + 1050, pos.y + 32),
-                new Scalar(255, 255, 255, 230),
-                -1
-        );
-
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
-                new Scalar(255, 255, 255, 255), 9);
-
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.55,
-                new Scalar(255, 0, 0, 255), 5);
-    }
-
-    private void putOutlinedTextMat(Mat mat, String text, Point pos, double scale, Scalar fg, Scalar bg) {
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, scale, bg, 6);
-        Imgproc.putText(mat, text, pos, Imgproc.FONT_HERSHEY_SIMPLEX, scale, fg, 2);
-    }
-
-    private void logCalibrationReferenceInfo(List<ReferencePoint> refs) {
-        Log.d(TAG, "===== CALIBRATION REFERENCE INFO =====");
-        Log.d(TAG, "REFERENCE COUNT = " + (refs == null ? 0 : refs.size()));
-        if (refs != null) {
-            for (ReferencePoint r : refs) {
-                Log.d(TAG, "REF id=" + r.id + " y=" + r.y + " cm=" + r.cm);
-            }
-        }
-    }
-
-    private void logAllDetectedIds(List<MarkerData> markers) {
-        StringBuilder sb = new StringBuilder("ALL IDs: ");
-        for (MarkerData m : markers) {
-            sb.append(m.id).append(" ");
-        }
-        Log.d(TAG, sb.toString());
-    }
-
-    private void logReferenceIds(List<ReferencePoint> refs) {
-        StringBuilder sb = new StringBuilder("REF IDs: ");
-        for (ReferencePoint r : refs) {
-            sb.append(r.id).append("(").append(r.cm).append("cm) ");
-        }
-        Log.d(TAG, sb.toString());
-    }
-
-    private void logPoseLandmark(String name, PoseLandmark landmark) {
-        if (landmark == null) {
-            Log.d(TAG, name + " = null");
-        } else {
-            Log.d(TAG, name + " = (" + landmark.getPosition().x + ", " + landmark.getPosition().y + ")");
-        }
-    }
-
-    private String format1(double value) {
-        return String.format(Locale.US, "%.1f", value);
-    }
-
-    private Bitmap addTimestampToBitmap(Bitmap bitmap) {
-        try {
-            Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-            Mat mat = new Mat();
-            Utils.bitmapToMat(mutableBitmap, mat);
-
-            String line1 = new SimpleDateFormat("EEEE, dd MMMM yyyy", new Locale("id", "ID")).format(new Date());
-            String line2 = new SimpleDateFormat("HH:mm:ss", new Locale("id", "ID")).format(new Date());
-
-            drawTimestampLikeCamera(mat, line1, line2);
-
-            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
-            Utils.matToBitmap(mat, resultBitmap);
-            mat.release();
-
-            return resultBitmap;
-        } catch (Exception e) {
-            Log.e(TAG, "addTimestampToBitmap error", e);
-            return bitmap;
-        }
-    }
-
-    private void drawTimestampLikeCamera(Mat mat, String line1, String line2) {
-        int left = 35;
-
-        // Dinaikkan sedikit supaya tidak ketutup tombol bawah.
-        int line1Y = mat.rows() - 190;
-        int line2Y = mat.rows() - 105;
-
-        double fontScale = 1.35;
-        int outlineThickness = 8;
-        int textThickness = 4;
-
-        // Outline putih agar tulisan hitam tetap terbaca di background gelap.
-        Imgproc.putText(mat, line1, new Point(left, line1Y),
-                Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(255, 255, 255, 255), outlineThickness);
-
-        Imgproc.putText(mat, line2, new Point(left, line2Y),
-                Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(255, 255, 255, 255), outlineThickness);
-
-        // Teks utama timestamp tetap hitam.
-        Imgproc.putText(mat, line1, new Point(left, line1Y),
-                Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(0, 0, 0, 255), textThickness);
-
-        Imgproc.putText(mat, line2, new Point(left, line2Y),
-                Imgproc.FONT_HERSHEY_SIMPLEX, fontScale,
-                new Scalar(0, 0, 0, 255), textThickness);
-    }
+    // ==================== LOAD & ROTATE BITMAP ====================
 
     private Bitmap loadAndRotateBitmap(Uri imageUri) {
         try {
@@ -1126,13 +728,19 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                     return bitmap;
             }
 
-            return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            return Bitmap.createBitmap(
+                    bitmap, 0, 0,
+                    bitmap.getWidth(), bitmap.getHeight(),
+                    matrix, true
+            );
 
         } catch (Exception e) {
             Log.e(TAG, "rotateBitmapIfRequired error", e);
             return bitmap;
         }
     }
+
+    // ==================== SAVE ====================
 
     private void saveBitmapToAppFiles(Bitmap bitmap) {
         try {
@@ -1141,7 +749,10 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
                 picturesDir.mkdirs();
             }
 
-            String fileName = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+            String fileName = new SimpleDateFormat(
+                    "yyyyMMdd_HHmmss", Locale.getDefault()
+            ).format(new Date());
+
             File imageFile = new File(picturesDir, "GAL_" + fileName + ".jpg");
 
             FileOutputStream fos = new FileOutputStream(imageFile);
@@ -1155,120 +766,6 @@ public class GalleryOpenCvActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "saveBitmapToAppFiles error", e);
             Toast.makeText(this, "Gagal menyimpan gambar", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private Double getLandmarkX(PoseLandmark l) {
-        return l == null ? null : (double) l.getPosition().x;
-    }
-
-    private Double getLandmarkY(PoseLandmark l) {
-        return l == null ? null : (double) l.getPosition().y;
-    }
-
-    private Double minValidY(Double... vals) {
-        Double best = null;
-        for (Double v : vals) {
-            if (v == null) continue;
-            if (best == null || v < best) best = v;
-        }
-        return best;
-    }
-
-    private Double maxValidY(Double... vals) {
-        Double best = null;
-        for (Double v : vals) {
-            if (v == null) continue;
-            if (best == null || v > best) best = v;
-        }
-        return best;
-    }
-
-    private Double avgValidX(Double... vals) {
-        double sum = 0.0;
-        int count = 0;
-        for (Double v : vals) {
-            if (v == null) continue;
-            sum += v;
-            count++;
-        }
-        return count == 0 ? null : sum / count;
-    }
-
-    private double distance(Point p1, Point p2) {
-        return Math.hypot(p1.x - p2.x, p1.y - p2.y);
-    }
-
-    private static class ArucoResult {
-        Bitmap bitmapWithIds;
-        List<MarkerData> markers;
-
-        ArucoResult(Bitmap bitmapWithIds, List<MarkerData> markers) {
-            this.bitmapWithIds = bitmapWithIds;
-            this.markers = markers;
-        }
-    }
-
-    private static class MarkerData {
-        int id;
-        Point p0;
-        Point p1;
-        Point p2;
-        Point p3;
-        double avgSidePx;
-
-        MarkerData(int id, Point p0, Point p1, Point p2, Point p3, double avgSidePx) {
-            this.id = id;
-            this.p0 = p0;
-            this.p1 = p1;
-            this.p2 = p2;
-            this.p3 = p3;
-            this.avgSidePx = avgSidePx;
-        }
-
-        Point getCenter() {
-            return new Point(
-                    (p0.x + p1.x + p2.x + p3.x) / 4.0,
-                    (p0.y + p1.y + p2.y + p3.y) / 4.0
-            );
-        }
-    }
-
-    private static class ReferencePoint {
-        int id;
-        double y;
-        double cm;
-        Point center;
-
-        ReferencePoint(int id, double y, double cm, Point center) {
-            this.id = id;
-            this.y = y;
-            this.cm = cm;
-            this.center = center;
-        }
-    }
-
-    private static class CalibrationModel {
-        double a;
-        double b;
-        double minCm;
-        double maxCm;
-
-        CalibrationModel(double a, double b, double minCm, double maxCm) {
-            this.a = a;
-            this.b = b;
-            this.minCm = minCm;
-            this.maxCm = maxCm;
-        }
-    }
-
-    private static class PersonPoints {
-        Point head;
-        Point foot;
-
-        PersonPoints(Point head, Point foot) {
-            this.head = head;
-            this.foot = foot;
         }
     }
 }

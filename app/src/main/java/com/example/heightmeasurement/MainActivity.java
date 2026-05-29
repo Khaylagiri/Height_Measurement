@@ -3,7 +3,6 @@ package com.example.heightmeasurement;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.LinearLayout;
@@ -22,7 +21,7 @@ import org.opencv.android.OpenCVLoader;
 
 public class MainActivity extends AppCompatActivity {
 
-    private LinearLayout btnPhoto, btnGallery, btnFile;
+    private LinearLayout btnPhoto, btnGallery, btnFile, btnDelta, btnMediaPipe;
 
     private final ActivityResultLauncher<String> cameraPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
@@ -65,6 +64,8 @@ public class MainActivity extends AppCompatActivity {
         btnPhoto = findViewById(R.id.btnPhoto);
         btnGallery = findViewById(R.id.btnGallery);
         btnFile = findViewById(R.id.btnFile);
+        btnDelta = findViewById(R.id.btnDelta);
+        btnMediaPipe = findViewById(R.id.btnMediaPipe);
 
         btnPhoto.setOnClickListener(v -> checkCameraPermissionAndOpen());
 
@@ -72,6 +73,17 @@ public class MainActivity extends AppCompatActivity {
 
         btnFile.setOnClickListener(v -> {
             Intent intent = new Intent(MainActivity.this, FileListActivity.class);
+            startActivity(intent);
+        });
+
+        btnDelta.setOnClickListener(v -> {
+            Intent intent = new Intent(MainActivity.this, DeltaMeasurementActivity.class);
+            startActivity(intent);
+        });
+
+        btnMediaPipe.setOnClickListener(v -> {
+            Toast.makeText(this, "Membuka MediaPipe", Toast.LENGTH_SHORT).show();
+            Intent intent = new Intent(MainActivity.this, MediaPipeActivity.class);
             startActivity(intent);
         });
     }

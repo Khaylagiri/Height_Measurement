@@ -48,7 +48,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="Measuring height with ArUco Marker"
+                    android:gravity="center"
+                    android:text="Measuring height with ArUco Marker, Delta Image, and MediaPipe"
                     android:textColor="#6B7280"
                     android:textSize="16sp" />
             </LinearLayout>
@@ -79,99 +80,196 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:gravity="center"
-                    android:orientation="horizontal"
-                    android:weightSum="3">
+                    android:orientation="vertical">
 
+                    <!-- Baris 1: Photo dan Perspective -->
                     <LinearLayout
-                        android:id="@+id/btnPhoto"
-                        android:layout_width="0dp"
-                        android:layout_height="110dp"
-                        android:layout_weight="1"
-                        android:layout_marginEnd="8dp"
-                        android:background="@drawable/bg_action_button"
-                        android:clickable="true"
-                        android:focusable="true"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
                         android:gravity="center"
-                        android:orientation="vertical"
-                        android:padding="12dp">
+                        android:orientation="horizontal"
+                        android:weightSum="2">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:contentDescription="Photo"
-                            android:src="@android:drawable/ic_menu_camera"
-                            android:tint="#FFFFFF" />
+                        <LinearLayout
+                            android:id="@+id/btnPhoto"
+                            android:layout_width="0dp"
+                            android:layout_height="110dp"
+                            android:layout_marginEnd="6dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_action_button"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:padding="12dp">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="10dp"
-                            android:text="Photo"
-                            android:textColor="#FFFFFF"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:contentDescription="Photo"
+                                android:src="@android:drawable/ic_menu_camera"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="10dp"
+                                android:text="Photo"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/btnGallery"
+                            android:layout_width="0dp"
+                            android:layout_height="110dp"
+                            android:layout_marginStart="6dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_action_button"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:padding="12dp">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:contentDescription="Perspective"
+                                android:src="@android:drawable/ic_menu_gallery"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="10dp"
+                                android:text="Perspective"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
                     </LinearLayout>
 
+                    <!-- Baris 2: File dan Delta -->
                     <LinearLayout
-                        android:id="@+id/btnGallery"
-                        android:layout_width="0dp"
-                        android:layout_height="110dp"
-                        android:layout_weight="1"
-                        android:layout_marginHorizontal="4dp"
-                        android:background="@drawable/bg_action_button"
-                        android:clickable="true"
-                        android:focusable="true"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
                         android:gravity="center"
-                        android:orientation="vertical"
-                        android:padding="12dp">
+                        android:orientation="horizontal"
+                        android:weightSum="2">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:contentDescription="Gallery"
-                            android:src="@android:drawable/ic_menu_gallery"
-                            android:tint="#FFFFFF" />
+                        <LinearLayout
+                            android:id="@+id/btnFile"
+                            android:layout_width="0dp"
+                            android:layout_height="110dp"
+                            android:layout_marginEnd="6dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_action_button"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:padding="12dp">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="10dp"
-                            android:text="Gallery"
-                            android:textColor="#FFFFFF"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:contentDescription="File"
+                                android:src="@android:drawable/ic_menu_agenda"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="10dp"
+                                android:text="File"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/btnDelta"
+                            android:layout_width="0dp"
+                            android:layout_height="110dp"
+                            android:layout_marginStart="6dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_action_button"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:padding="12dp">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:contentDescription="Delta"
+                                android:src="@android:drawable/ic_menu_manage"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="10dp"
+                                android:text="Delta"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
                     </LinearLayout>
 
+                    <!-- Baris 3: MediaPipe -->
                     <LinearLayout
-                        android:id="@+id/btnFile"
-                        android:layout_width="0dp"
-                        android:layout_height="110dp"
-                        android:layout_weight="1"
-                        android:layout_marginStart="8dp"
-                        android:background="@drawable/bg_action_button"
-                        android:clickable="true"
-                        android:focusable="true"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
                         android:gravity="center"
-                        android:orientation="vertical"
-                        android:padding="12dp">
+                        android:orientation="horizontal"
+                        android:weightSum="2">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:contentDescription="File"
-                            android:src="@android:drawable/ic_menu_agenda"
-                            android:tint="#FFFFFF" />
+                        <LinearLayout
+                            android:id="@+id/btnMediaPipe"
+                            android:layout_width="0dp"
+                            android:layout_height="110dp"
+                            android:layout_marginEnd="6dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_action_button"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:padding="12dp">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="10dp"
-                            android:text="File"
-                            android:textColor="#FFFFFF"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:contentDescription="MediaPipe"
+                                android:src="@android:drawable/ic_menu_view"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="10dp"
+                                android:text="MediaPipe"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <Space
+                            android:layout_width="0dp"
+                            android:layout_height="110dp"
+                            android:layout_marginStart="6dp"
+                            android:layout_weight="1" />
+
                     </LinearLayout>
+
                 </LinearLayout>
 
                 <TextView
@@ -224,7 +322,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:lineSpacingExtra="6dp"
-                    android:text="• Make sure the ArUco marker is clearly visible in the image&#10;• Use sufficient lighting&#10;• Maintain proper distance from objects"
+                    android:text="• Use ArUco for marker method&#10;• Use Delta for background subtraction method&#10;• Use MediaPipe for pose landmark detection&#10;• For Delta, choose background photo first, then person photo"
                     android:textColor="#4B5563"
                     android:textSize="16sp" />
 
