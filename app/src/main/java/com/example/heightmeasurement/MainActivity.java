@@ -1,10 +1,8 @@
 package com.example.heightmeasurement;
 
-import android.Manifest;
 import android.content.Intent;
-import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Bundle;
-import android.util.Log;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
@@ -12,32 +10,30 @@ import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import org.opencv.android.OpenCVLoader;
-
 public class MainActivity extends AppCompatActivity {
 
-    private LinearLayout btnPhoto, btnGallery, btnFile, btnDelta, btnMediaPipe;
+    private LinearLayout btnPerspective;
+    private LinearLayout btnMediaPipe;
+    private LinearLayout btnMeasurement;
+    private LinearLayout btnFile;
 
-    private final ActivityResultLauncher<String> cameraPermissionLauncher =
-            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
-                if (isGranted) {
-                    openOpenCvCamera();
+    private final ActivityResultLauncher<String> perspectiveLauncher =
+            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
+                if (uri != null) {
+                    openPerspective(uri);
                 } else {
-                    Toast.makeText(this, "Permission kamera ditolak", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Tidak ada gambar dipilih", Toast.LENGTH_SHORT).show();
                 }
             });
 
-    private final ActivityResultLauncher<String> galleryLauncher =
+    private final ActivityResultLauncher<String> measurementLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) {
-                    Intent intent = new Intent(MainActivity.this, GalleryOpenCvActivity.class);
-                    intent.putExtra("image_uri", uri.toString());
-                    startActivity(intent);
+                    openMeasurement(uri);
                 } else {
                     Toast.makeText(this, "Tidak ada gambar dipilih", Toast.LENGTH_SHORT).show();
                 }
@@ -49,60 +45,58 @@ public class MainActivity extends AppCompatActivity {
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (view, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
+            view.setPadding(
+                    systemBars.left,
+                    systemBars.top,
+                    systemBars.right,
+                    systemBars.bottom
+            );
             return insets;
         });
 
-        if (OpenCVLoader.initLocal()) {
-            Log.i("opencv", "successfully integrated");
-        } else {
-            Log.e("opencv", "failed to integrate");
-        }
-
-        btnPhoto = findViewById(R.id.btnPhoto);
-        btnGallery = findViewById(R.id.btnGallery);
-        btnFile = findViewById(R.id.btnFile);
-        btnDelta = findViewById(R.id.btnDelta);
+        btnPerspective = findViewById(R.id.btnPerspective);
         btnMediaPipe = findViewById(R.id.btnMediaPipe);
+        btnMeasurement = findViewById(R.id.btnMeasurement);
+        btnFile = findViewById(R.id.btnFile);
 
-        btnPhoto.setOnClickListener(v -> checkCameraPermissionAndOpen());
+        btnPerspective.setOnClickListener(view -> openPerspectivePicker());
 
-        btnGallery.setOnClickListener(v -> openGallery());
+        btnMediaPipe.setOnClickListener(view -> openMediaPipe());
 
-        btnFile.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, FileListActivity.class);
-            startActivity(intent);
-        });
+        btnMeasurement.setOnClickListener(view -> openMeasurementPicker());
 
-        btnDelta.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, DeltaMeasurementActivity.class);
-            startActivity(intent);
-        });
-
-        btnMediaPipe.setOnClickListener(v -> {
-            Toast.makeText(this, "Membuka MediaPipe", Toast.LENGTH_SHORT).show();
-            Intent intent = new Intent(MainActivity.this, MediaPipeActivity.class);
-            startActivity(intent);
-        });
+        btnFile.setOnClickListener(view -> openFileList());
     }
 
-    private void checkCameraPermissionAndOpen() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                == PackageManager.PERMISSION_GRANTED) {
-            openOpenCvCamera();
-        } else {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
-        }
+    private void openPerspectivePicker() {
+        perspectiveLauncher.launch("image/*");
     }
 
-    private void openOpenCvCamera() {
-        Intent intent = new Intent(MainActivity.this, OpenCvCameraActivity.class);
+    private void openMeasurementPicker() {
+        measurementLauncher.launch("image/*");
+    }
+
+    private void openPerspective(Uri uri) {
+        Intent intent = new Intent(MainActivity.this, PerspectiveCorrectionActivity.class);
+        intent.putExtra("image_uri", uri.toString());
         startActivity(intent);
     }
 
-    private void openGallery() {
-        galleryLauncher.launch("image/*");
+    private void openMediaPipe() {
+        Intent intent = new Intent(MainActivity.this, MediaPipeActivity.class);
+        startActivity(intent);
+    }
+
+    private void openMeasurement(Uri uri) {
+        Intent intent = new Intent(MainActivity.this, MeasurementActivity.class);
+        intent.putExtra("image_uri", uri.toString());
+        startActivity(intent);
+    }
+
+    private void openFileList() {
+        Intent intent = new Intent(MainActivity.this, FileListActivity.class);
+        startActivity(intent);
     }
 }

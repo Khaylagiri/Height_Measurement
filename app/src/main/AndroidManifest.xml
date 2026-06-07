@@ -19,7 +19,7 @@
         android:theme="@style/Theme.HeightMeasurement">
 
         <activity
-            android:name=".GalleryOpenCvActivity"
+            android:name=".PerspectiveCorrectionActivity"
             android:exported="false" />
 
         <activity
@@ -31,15 +31,11 @@
             android:exported="false" />
 
         <activity
-            android:name=".OpenCvCameraActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".MediaPipeActivity"
             android:exported="false" />
 
         <activity
-            android:name=".DeltaMeasurementActivity"
+            android:name=".MeasurementActivity"
             android:exported="false" />
 
         <activity
