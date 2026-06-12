@@ -17,10 +17,13 @@ import androidx.exifinterface.media.ExifInterface;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
 import org.opencv.calib3d.Calib3d;
+import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
 import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.ArucoDetector;
@@ -33,22 +36,43 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
-    private static final String TAG = "HEIGHT_MEASURE";
-    private static final int MARKER_DICT = Objdetect.DICT_6X6_1000;
-    private static final int MAX_WARP_W = 2200;
-    private static final int MAX_WARP_H = 3600;
+    private static final String TAG = "PerspectiveCorrection";
 
-    private static final double CELL_PX = 100.0;
-    private static final int OUTPUT_WIDTH_PX = 11 * 100;
-    private static final int OUTPUT_HEIGHT_PX = 3400;
-    private static final double BOTTOM_BOARD_OFFSET_Y_PX = 1250.0;
+    private static final int MARKER_DICT = Objdetect.DICT_6X6_1000;
+
+    private static final double PX_PER_CELL = 120.0;
+
+    private static final double BOARD_COLS = 11.0;
+    private static final double TOP_BOARD_ROWS = 8.0;
+    private static final double BOTTOM_BOARD_OFFSET_Y = 11.35;
+    private static final double BOTTOM_BOARD_ROWS = 8.0;
+
+    private static final double LEFT_RIGHT_MARGIN_CELLS = 0.000;
+    private static final double TOP_MARGIN_CELLS = 0.35;
+    private static final double BOTTOM_EXTRA_CELLS = 5.60;
+
+    private static final double MARKER_SIZE_CELLS = 0.74;
+
+    private static final int RESULT_SHIFT_X_PX = -100;
+
+    private static final int CROP_WHITE_THRESHOLD = 245;
+
+    private static final int OUTPUT_WIDTH_PX =
+            (int) Math.round((BOARD_COLS + LEFT_RIGHT_MARGIN_CELLS * 2.0) * PX_PER_CELL);
+
+    private static final int OUTPUT_HEIGHT_PX =
+            (int) Math.round(
+                    (TOP_MARGIN_CELLS
+                            + BOTTOM_BOARD_OFFSET_Y
+                            + BOTTOM_BOARD_ROWS
+                            + BOTTOM_EXTRA_CELLS) * PX_PER_CELL
+            );
 
     private ImageView imageViewResult;
     private Button btnPerspective;
@@ -65,6 +89,9 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         imageViewResult = findViewById(R.id.imageViewResult);
         btnPerspective = findViewById(R.id.btnPerspective);
         btnSaveGalleryImage = findViewById(R.id.btnSaveGalleryImage);
+
+        imageViewResult.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        imageViewResult.setAdjustViewBounds(true);
 
         if (!OpenCVLoader.initLocal()) {
             Toast.makeText(this, "OpenCV gagal diinisialisasi", Toast.LENGTH_SHORT).show();
@@ -105,22 +132,25 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         try {
             btnPerspective.setEnabled(false);
 
-            Bitmap warped = autoPerspectiveFromAllBoardHomography(originalBitmap);
+            Bitmap result = autoPerspectiveCamScannerStyle(originalBitmap);
 
-            if (warped == null) {
-                warped = autoPerspectiveFromTwoBoards(originalBitmap);
-            }
-
-            if (warped == null) {
-                Toast.makeText(this,
-                        "Gagal auto perspective. Pastikan marker terlihat jelas.",
-                        Toast.LENGTH_LONG).show();
+            if (result == null) {
+                Toast.makeText(
+                        this,
+                        "Perspective gagal. Pastikan marker ArUco terlihat jelas dan tidak terlalu tertutup badan.",
+                        Toast.LENGTH_LONG
+                ).show();
                 return;
             }
 
-            currentBitmap = warped;
+            currentBitmap = result;
             imageViewResult.setImageBitmap(currentBitmap);
-            Toast.makeText(this, "Perspective berhasil", Toast.LENGTH_SHORT).show();
+
+            Toast.makeText(
+                    this,
+                    "Perspective berhasil",
+                    Toast.LENGTH_SHORT
+            ).show();
 
         } catch (Exception e) {
             Log.e(TAG, "runPerspectiveOnly error", e);
@@ -130,16 +160,20 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         }
     }
 
-    private Bitmap autoPerspectiveFromAllBoardHomography(Bitmap bitmap) {
+    private Bitmap autoPerspectiveCamScannerStyle(Bitmap bitmap) {
         Mat srcMat = new Mat();
         Mat gray = new Mat();
         Mat warped = new Mat();
+        Mat shiftedWarped = null;
+        Mat croppedWarped = null;
+
         Mat ids = new Mat();
         List<Mat> corners = new ArrayList<>();
         List<Mat> rejected = new ArrayList<>();
-        MatOfPoint2f srcPoints = null;
-        MatOfPoint2f dstPoints = null;
-        Mat H = new Mat();
+
+        MatOfPoint2f imagePointsMat = null;
+        MatOfPoint2f boardPointsMat = null;
+        Mat homography = new Mat();
 
         try {
             Utils.bitmapToMat(bitmap, srcMat);
@@ -157,103 +191,315 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
             DetectorParameters parameters = createArucoDetectorParameters();
             ArucoDetector detector = new ArucoDetector(dictionary, parameters);
+
             detector.detectMarkers(gray, corners, ids, rejected);
 
-            if (ids.empty()) return null;
+            if (ids.empty() || corners.isEmpty()) {
+                return null;
+            }
 
             List<Point> imagePoints = new ArrayList<>();
-            List<Point> worldPoints = new ArrayList<>();
+            List<Point> boardPoints = new ArrayList<>();
+
+            int usedMarkers = 0;
 
             for (int i = 0; i < ids.rows(); i++) {
                 int id = (int) ids.get(i, 0)[0];
 
-                Point worldCenter = lookupBoardCenterPx(id);
-                if (worldCenter == null) continue;
+                Point[] worldCorners = getMarkerWorldCorners(id);
+                if (worldCorners == null) {
+                    continue;
+                }
 
-                Mat c = corners.get(i);
+                Point[] imageCorners = getMarkerImageCornersOrdered(corners.get(i));
+                if (imageCorners == null) {
+                    continue;
+                }
 
-                double[] xy0 = c.get(0, 0);
-                double[] xy1 = c.get(0, 1);
-                double[] xy2 = c.get(0, 2);
-                double[] xy3 = c.get(0, 3);
+                for (int k = 0; k < 4; k++) {
+                    imagePoints.add(imageCorners[k]);
+                    boardPoints.add(worldCorners[k]);
+                }
 
-                double cx = (xy0[0] + xy1[0] + xy2[0] + xy3[0]) / 4.0;
-                double cy = (xy0[1] + xy1[1] + xy2[1] + xy3[1]) / 4.0;
-
-                imagePoints.add(new Point(cx, cy));
-                worldPoints.add(worldCenter);
+                usedMarkers++;
             }
 
-            if (imagePoints.size() < 4) return null;
+            Log.d(TAG, "Detected markers: " + corners.size() + ", used markers: " + usedMarkers);
 
-            srcPoints = new MatOfPoint2f(imagePoints.toArray(new Point[0]));
-            dstPoints = new MatOfPoint2f(worldPoints.toArray(new Point[0]));
+            if (usedMarkers < 4 || imagePoints.size() < 16) {
+                return null;
+            }
 
-            H = Calib3d.findHomography(srcPoints, dstPoints, Calib3d.RANSAC, 5.0);
+            imagePointsMat = new MatOfPoint2f(imagePoints.toArray(new Point[0]));
+            boardPointsMat = new MatOfPoint2f(boardPoints.toArray(new Point[0]));
 
-            if (H.empty()) return null;
+            homography = Calib3d.findHomography(
+                    imagePointsMat,
+                    boardPointsMat,
+                    Calib3d.RANSAC,
+                    5.0
+            );
+
+            if (homography.empty()) {
+                return null;
+            }
 
             Imgproc.warpPerspective(
                     srcMat,
                     warped,
-                    H,
-                    new Size(OUTPUT_WIDTH_PX, OUTPUT_HEIGHT_PX)
+                    homography,
+                    new Size(OUTPUT_WIDTH_PX, OUTPUT_HEIGHT_PX),
+                    Imgproc.INTER_LINEAR
             );
 
+            shiftedWarped = shiftResultX(warped, RESULT_SHIFT_X_PX);
+
+            croppedWarped = cropHorizontalBlankBorders(shiftedWarped);
+
             Bitmap result = Bitmap.createBitmap(
-                    warped.cols(),
-                    warped.rows(),
+                    croppedWarped.cols(),
+                    croppedWarped.rows(),
                     Bitmap.Config.ARGB_8888
             );
 
-            Utils.matToBitmap(warped, result);
+            Utils.matToBitmap(croppedWarped, result);
             return result;
 
         } catch (Exception e) {
-            Log.e(TAG, "autoPerspectiveFromAllBoardHomography error", e);
+            Log.e(TAG, "autoPerspectiveCamScannerStyle error", e);
             return null;
         } finally {
-            for (Mat c : corners) c.release();
-            for (Mat r : rejected) r.release();
+            for (Mat c : corners) {
+                c.release();
+            }
 
-            if (srcPoints != null) srcPoints.release();
-            if (dstPoints != null) dstPoints.release();
+            for (Mat r : rejected) {
+                r.release();
+            }
 
-            H.release();
+            if (imagePointsMat != null) imagePointsMat.release();
+            if (boardPointsMat != null) boardPointsMat.release();
+
             ids.release();
-            gray.release();
+            homography.release();
             srcMat.release();
+            gray.release();
             warped.release();
+
+            if (shiftedWarped != null) {
+                shiftedWarped.release();
+            }
+
+            if (croppedWarped != null) {
+                croppedWarped.release();
+            }
         }
     }
 
-    private Point lookupBoardCenterPx(int id) {
-        if (id >= 100 && id < 200) return lookupTopBoardCenterPx(id);
-        if (id >= 400 && id < 500) return lookupBottomBoardCenterPx(id);
+    private Mat shiftResultX(Mat input, int shiftXPx) {
+        Mat output = new Mat(input.rows(), input.cols(), input.type());
+
+        Mat translation = Mat.eye(2, 3, CvType.CV_64F);
+
+        translation.put(0, 2, shiftXPx);
+        translation.put(1, 2, 0);
+
+        Imgproc.warpAffine(
+                input,
+                output,
+                translation,
+                input.size(),
+                Imgproc.INTER_LINEAR,
+                Core.BORDER_CONSTANT,
+                new Scalar(255, 255, 255, 255)
+        );
+
+        translation.release();
+
+        return output;
+    }
+
+    private Mat cropHorizontalBlankBorders(Mat input) {
+        Mat gray = new Mat();
+        Mat mask = new Mat();
+
+        try {
+            if (input.channels() == 4) {
+                Imgproc.cvtColor(input, gray, Imgproc.COLOR_RGBA2GRAY);
+            } else if (input.channels() == 3) {
+                Imgproc.cvtColor(input, gray, Imgproc.COLOR_BGR2GRAY);
+            } else {
+                gray = input.clone();
+            }
+
+            Imgproc.threshold(
+                    gray,
+                    mask,
+                    CROP_WHITE_THRESHOLD,
+                    255,
+                    Imgproc.THRESH_BINARY_INV
+            );
+
+            int left = -1;
+            int right = -1;
+
+            int minPixelsPerColumn = Math.max(5, input.rows() / 400);
+
+            for (int x = 0; x < mask.cols(); x++) {
+                Mat col = mask.col(x);
+                int count = Core.countNonZero(col);
+                col.release();
+
+                if (count > minPixelsPerColumn) {
+                    left = x;
+                    break;
+                }
+            }
+
+            for (int x = mask.cols() - 1; x >= 0; x--) {
+                Mat col = mask.col(x);
+                int count = Core.countNonZero(col);
+                col.release();
+
+                if (count > minPixelsPerColumn) {
+                    right = x;
+                    break;
+                }
+            }
+
+            if (left < 0 || right < 0 || right <= left) {
+                return input.clone();
+            }
+
+            int padding = 0;
+
+            left = Math.max(0, left - padding);
+            right = Math.min(input.cols() - 1, right + padding);
+
+            Rect cropRect = new Rect(
+                    left,
+                    0,
+                    right - left + 1,
+                    input.rows()
+            );
+
+            return new Mat(input, cropRect).clone();
+
+        } finally {
+            gray.release();
+            mask.release();
+        }
+    }
+
+    private Point[] getMarkerImageCornersOrdered(Mat markerMat) {
+        try {
+            Point[] raw = new Point[4];
+
+            for (int i = 0; i < 4; i++) {
+                double[] xy = markerMat.get(0, i);
+
+                if (xy == null || xy.length < 2) {
+                    xy = markerMat.get(i, 0);
+                }
+
+                if (xy == null || xy.length < 2) {
+                    return null;
+                }
+
+                raw[i] = new Point(xy[0], xy[1]);
+            }
+
+            return orderCornersTopLeftTopRightBottomRightBottomLeft(raw);
+
+        } catch (Exception e) {
+            Log.e(TAG, "getMarkerImageCornersOrdered error", e);
+            return null;
+        }
+    }
+
+    private Point[] orderCornersTopLeftTopRightBottomRightBottomLeft(Point[] pts) {
+        if (pts == null || pts.length != 4) return null;
+
+        Point tl = null;
+        Point tr = null;
+        Point br = null;
+        Point bl = null;
+
+        double minSum = Double.MAX_VALUE;
+        double maxSum = -Double.MAX_VALUE;
+        double minDiff = Double.MAX_VALUE;
+        double maxDiff = -Double.MAX_VALUE;
+
+        for (Point p : pts) {
+            double sum = p.x + p.y;
+            double diff = p.y - p.x;
+
+            if (sum < minSum) {
+                minSum = sum;
+                tl = p;
+            }
+
+            if (sum > maxSum) {
+                maxSum = sum;
+                br = p;
+            }
+
+            if (diff < minDiff) {
+                minDiff = diff;
+                tr = p;
+            }
+
+            if (diff > maxDiff) {
+                maxDiff = diff;
+                bl = p;
+            }
+        }
+
+        if (tl == null || tr == null || br == null || bl == null) {
+            return null;
+        }
+
+        return new Point[]{tl, tr, br, bl};
+    }
+
+    private Point[] getMarkerWorldCorners(int id) {
+        Point center = getMarkerWorldCenter(id);
+        if (center == null) {
+            return null;
+        }
+
+        double markerSizePx = MARKER_SIZE_CELLS * PX_PER_CELL;
+        double half = markerSizePx / 2.0;
+
+        return new Point[]{
+                new Point(center.x - half, center.y - half),
+                new Point(center.x + half, center.y - half),
+                new Point(center.x + half, center.y + half),
+                new Point(center.x - half, center.y + half)
+        };
+    }
+
+    private Point getMarkerWorldCenter(int id) {
+        Integer[] rcTop = getTopBoardRowCol(id);
+
+        if (rcTop != null) {
+            double x = (LEFT_RIGHT_MARGIN_CELLS + rcTop[1] + 0.5) * PX_PER_CELL;
+            double y = (TOP_MARGIN_CELLS + rcTop[0] + 0.5) * PX_PER_CELL;
+            return new Point(x, y);
+        }
+
+        Integer[] rcBottom = getBottomBoardRowCol(id);
+
+        if (rcBottom != null) {
+            double x = (LEFT_RIGHT_MARGIN_CELLS + rcBottom[1] + 0.5) * PX_PER_CELL;
+            double y = (TOP_MARGIN_CELLS + BOTTOM_BOARD_OFFSET_Y + rcBottom[0] + 0.5) * PX_PER_CELL;
+            return new Point(x, y);
+        }
+
         return null;
     }
 
-    private Point lookupTopBoardCenterPx(int id) {
-        Integer[] rc = lookupTopBoardRowCol(id);
-        if (rc == null) return null;
-
-        return new Point(
-                (rc[1] + 0.5) * CELL_PX,
-                (rc[0] + 0.5) * CELL_PX
-        );
-    }
-
-    private Point lookupBottomBoardCenterPx(int id) {
-        Integer[] rc = lookupBottomBoardRowCol(id);
-        if (rc == null) return null;
-
-        return new Point(
-                (rc[1] + 0.5) * CELL_PX,
-                BOTTOM_BOARD_OFFSET_Y_PX + (rc[0] + 0.5) * CELL_PX
-        );
-    }
-
-    private Integer[] lookupTopBoardRowCol(int id) {
+    private Integer[] getTopBoardRowCol(int id) {
         switch (id) {
             case 103: return new Integer[]{0, 0};
             case 115: return new Integer[]{0, 2};
@@ -311,24 +557,39 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         }
     }
 
-    private Integer[] lookupBottomBoardRowCol(int id) {
+    private Integer[] getBottomBoardRowCol(int id) {
         switch (id) {
             case 403: return new Integer[]{0, 0};
             case 435: return new Integer[]{0, 10};
+
+            case 407: return new Integer[]{1, 1};
+            case 431: return new Integer[]{1, 9};
             case 439: return new Integer[]{1, 10};
+
             case 402: return new Integer[]{2, 0};
+            case 410: return new Integer[]{2, 2};
+            case 430: return new Integer[]{2, 8};
             case 434: return new Integer[]{2, 10};
+
+            case 406: return new Integer[]{3, 1};
             case 438: return new Integer[]{3, 10};
+
             case 401: return new Integer[]{4, 0};
+            case 409: return new Integer[]{4, 2};
             case 433: return new Integer[]{4, 10};
+
             case 400: return new Integer[]{5, 0};
             case 405: return new Integer[]{5, 2};
             case 429: return new Integer[]{5, 8};
             case 437: return new Integer[]{5, 10};
+
             case 404: return new Integer[]{6, 2};
             case 432: return new Integer[]{6, 8};
+
+            case 408: return new Integer[]{7, 0};
             case 428: return new Integer[]{7, 8};
             case 436: return new Integer[]{7, 10};
+
             default: return null;
         }
     }
@@ -339,11 +600,14 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         parameters.set_adaptiveThreshWinSizeMin(3);
         parameters.set_adaptiveThreshWinSizeMax(53);
         parameters.set_adaptiveThreshWinSizeStep(4);
-        parameters.set_minMarkerPerimeterRate(0.005);
+
+        parameters.set_minMarkerPerimeterRate(0.004);
         parameters.set_maxMarkerPerimeterRate(4.0);
-        parameters.set_polygonalApproxAccuracyRate(0.08);
+
+        parameters.set_polygonalApproxAccuracyRate(0.06);
         parameters.set_minCornerDistanceRate(0.005);
         parameters.set_minDistanceToBorder(1);
+
         parameters.set_cornerRefinementMethod(1);
         parameters.set_cornerRefinementWinSize(7);
         parameters.set_cornerRefinementMaxIterations(80);
@@ -352,274 +616,15 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         return parameters;
     }
 
-    private Bitmap autoPerspectiveFromTwoBoards(Bitmap bitmap) {
-        Mat srcMat = new Mat();
-        Mat gray = new Mat();
-        Mat warped = new Mat();
-
-        try {
-            Utils.bitmapToMat(bitmap, srcMat);
-
-            if (srcMat.channels() == 4) {
-                Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_RGBA2GRAY);
-            } else if (srcMat.channels() == 3) {
-                Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_BGR2GRAY);
-            } else {
-                gray = srcMat.clone();
-            }
-
-            Point[] boardCorners = detectTwoBoardCorners(gray);
-            if (boardCorners == null) return null;
-
-            Point tl = boardCorners[0];
-            Point tr = boardCorners[1];
-            Point br = boardCorners[2];
-            Point bl = boardCorners[3];
-
-            double widthTop = distance(tl, tr);
-            double widthBottom = distance(bl, br);
-            double maxWidth = Math.max(widthTop, widthBottom);
-
-            double heightLeft = distance(tl, bl);
-            double heightRight = distance(tr, br);
-            double maxHeight = Math.max(heightLeft, heightRight);
-
-            double scale = Math.min(
-                    (double) MAX_WARP_W / Math.max(1.0, maxWidth),
-                    (double) MAX_WARP_H / Math.max(1.0, maxHeight)
-            );
-
-            if (scale < 1.0) {
-                maxWidth = Math.max(800, Math.round(maxWidth * scale));
-                maxHeight = Math.max(1600, Math.round(maxHeight * scale));
-            }
-
-            MatOfPoint2f srcPoints = new MatOfPoint2f(tl, tr, br, bl);
-
-            MatOfPoint2f dstPoints = new MatOfPoint2f(
-                    new Point(0, 0),
-                    new Point(maxWidth - 1, 0),
-                    new Point(maxWidth - 1, maxHeight - 1),
-                    new Point(0, maxHeight - 1)
-            );
-
-            Mat H = Imgproc.getPerspectiveTransform(srcPoints, dstPoints);
-
-            Imgproc.warpPerspective(
-                    srcMat,
-                    warped,
-                    H,
-                    new Size(maxWidth, maxHeight)
-            );
-
-            Bitmap result = Bitmap.createBitmap(
-                    warped.cols(),
-                    warped.rows(),
-                    Bitmap.Config.ARGB_8888
-            );
-
-            Utils.matToBitmap(warped, result);
-
-            srcPoints.release();
-            dstPoints.release();
-            H.release();
-
-            return result;
-
-        } catch (Exception e) {
-            Log.e(TAG, "autoPerspectiveFromTwoBoards error", e);
-            return null;
-        } finally {
-            gray.release();
-            srcMat.release();
-            warped.release();
-        }
-    }
-
-    private Point[] detectTwoBoardCorners(Mat gray) {
-        List<Mat> corners = new ArrayList<>();
-        Mat ids = new Mat();
-        List<Mat> rejected = new ArrayList<>();
-
-        try {
-            Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
-            DetectorParameters parameters = createArucoDetectorParameters();
-            ArucoDetector detector = new ArucoDetector(dictionary, parameters);
-
-            detector.detectMarkers(gray, corners, ids, rejected);
-
-            if (ids.empty() || corners.size() < 8) return null;
-
-            List<Point> centers = new ArrayList<>();
-            double avgMarkerSide = 0.0;
-
-            for (Mat cornerMat : corners) {
-                double[] xy0 = cornerMat.get(0, 0);
-                double[] xy1 = cornerMat.get(0, 1);
-                double[] xy2 = cornerMat.get(0, 2);
-                double[] xy3 = cornerMat.get(0, 3);
-
-                double cx = (xy0[0] + xy1[0] + xy2[0] + xy3[0]) / 4.0;
-                double cy = (xy0[1] + xy1[1] + xy2[1] + xy3[1]) / 4.0;
-
-                centers.add(new Point(cx, cy));
-
-                double s1 = distance(new Point(xy0[0], xy0[1]), new Point(xy1[0], xy1[1]));
-                double s2 = distance(new Point(xy1[0], xy1[1]), new Point(xy2[0], xy2[1]));
-                double s3 = distance(new Point(xy2[0], xy2[1]), new Point(xy3[0], xy3[1]));
-                double s4 = distance(new Point(xy3[0], xy3[1]), new Point(xy0[0], xy0[1]));
-
-                avgMarkerSide += (s1 + s2 + s3 + s4) / 4.0;
-            }
-
-            avgMarkerSide /= Math.max(1, corners.size());
-
-            int sidePad = Math.max(80, (int) Math.round(avgMarkerSide * 1.2));
-            int topPad = Math.max(60, (int) Math.round(avgMarkerSide * 0.8));
-            int bottomPad = Math.max(380, (int) Math.round(avgMarkerSide * 5.0));
-
-            double medianY = computeMedianY(centers);
-
-            List<Point> topPoints = new ArrayList<>();
-            List<Point> bottomPoints = new ArrayList<>();
-
-            for (Mat cornerMat : corners) {
-                double[] xy0 = cornerMat.get(0, 0);
-                double[] xy1 = cornerMat.get(0, 1);
-                double[] xy2 = cornerMat.get(0, 2);
-                double[] xy3 = cornerMat.get(0, 3);
-
-                double cy = (xy0[1] + xy1[1] + xy2[1] + xy3[1]) / 4.0;
-
-                if (cy < medianY) {
-                    topPoints.add(new Point(xy0[0], xy0[1]));
-                    topPoints.add(new Point(xy1[0], xy1[1]));
-                    topPoints.add(new Point(xy2[0], xy2[1]));
-                    topPoints.add(new Point(xy3[0], xy3[1]));
-                } else {
-                    bottomPoints.add(new Point(xy0[0], xy0[1]));
-                    bottomPoints.add(new Point(xy1[0], xy1[1]));
-                    bottomPoints.add(new Point(xy2[0], xy2[1]));
-                    bottomPoints.add(new Point(xy3[0], xy3[1]));
-                }
-            }
-
-            if (topPoints.size() < 4 || bottomPoints.size() < 4) return null;
-
-            Rect topRect = boundingRectCustom(
-                    topPoints,
-                    sidePad,
-                    topPad,
-                    sidePad,
-                    sidePad,
-                    gray.cols(),
-                    gray.rows()
-            );
-
-            Rect bottomRect = boundingRectCustom(
-                    bottomPoints,
-                    sidePad,
-                    sidePad,
-                    sidePad,
-                    bottomPad,
-                    gray.cols(),
-                    gray.rows()
-            );
-
-            if (topRect == null || bottomRect == null) return null;
-
-            Point tl = new Point(topRect.x, topRect.y);
-            Point tr = new Point(topRect.x + topRect.width, topRect.y);
-
-            Point br = new Point(
-                    bottomRect.x + bottomRect.width,
-                    bottomRect.y + bottomRect.height
-            );
-
-            Point bl = new Point(
-                    bottomRect.x,
-                    bottomRect.y + bottomRect.height
-            );
-
-            return new Point[]{tl, tr, br, bl};
-
-        } catch (Exception e) {
-            Log.e(TAG, "detectTwoBoardCorners error", e);
-            return null;
-        } finally {
-            for (Mat c : corners) c.release();
-            for (Mat r : rejected) r.release();
-            ids.release();
-        }
-    }
-
-    private double computeMedianY(List<Point> points) {
-        List<Double> ys = new ArrayList<>();
-
-        for (Point p : points) {
-            ys.add(p.y);
-        }
-
-        Collections.sort(ys);
-
-        int n = ys.size();
-
-        if (n == 0) return 0;
-
-        if (n % 2 == 1) {
-            return ys.get(n / 2);
-        }
-
-        return (ys.get(n / 2 - 1) + ys.get(n / 2)) / 2.0;
-    }
-
-    private Rect boundingRectCustom(
-            List<Point> pts,
-            int leftPad,
-            int topPad,
-            int rightPad,
-            int bottomPad,
-            int imageW,
-            int imageH
-    ) {
-        if (pts == null || pts.isEmpty()) return null;
-
-        double minX = Double.MAX_VALUE;
-        double minY = Double.MAX_VALUE;
-        double maxX = -Double.MAX_VALUE;
-        double maxY = -Double.MAX_VALUE;
-
-        for (Point p : pts) {
-            if (p.x < minX) minX = p.x;
-            if (p.y < minY) minY = p.y;
-            if (p.x > maxX) maxX = p.x;
-            if (p.y > maxY) maxY = p.y;
-        }
-
-        int x1 = Math.max(0, (int) Math.floor(minX) - leftPad);
-        int y1 = Math.max(0, (int) Math.floor(minY) - topPad);
-        int x2 = Math.min(imageW - 1, (int) Math.ceil(maxX) + rightPad);
-        int y2 = Math.min(imageH - 1, (int) Math.ceil(maxY) + bottomPad);
-
-        int w = x2 - x1;
-        int h = y2 - y1;
-
-        if (w <= 0 || h <= 0) return null;
-
-        return new Rect(x1, y1, w, h);
-    }
-
-    private double distance(Point p1, Point p2) {
-        return Math.hypot(p1.x - p2.x, p1.y - p2.y);
-    }
-
     private Bitmap loadAndRotateBitmap(Uri imageUri) {
         try {
-            Bitmap original = loadBitmapFromUri(imageUri);
+            Bitmap bitmap = loadBitmapFromUri(imageUri);
 
-            if (original == null) return null;
+            if (bitmap == null) {
+                return null;
+            }
 
-            return rotateBitmapIfRequired(original, imageUri);
+            return rotateBitmapIfRequired(bitmap, imageUri);
 
         } catch (Exception e) {
             Log.e(TAG, "loadAndRotateBitmap error", e);
@@ -642,7 +647,9 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private Bitmap rotateBitmapIfRequired(Bitmap bitmap, Uri imageUri) {
         try (InputStream inputStream = getContentResolver().openInputStream(imageUri)) {
-            if (inputStream == null) return bitmap;
+            if (inputStream == null) {
+                return bitmap;
+            }
 
             ExifInterface exif = new ExifInterface(inputStream);
 
