@@ -1,12 +1,13 @@
 package com.example.heightmeasurement;
 
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Environment;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.Toast;
@@ -44,18 +45,15 @@ public class MediaPipeActivity extends AppCompatActivity {
     private static final String TAG = "MEDIAPIPE_HEIGHT";
     private static final String MODEL_ASSET_PATH = "pose_landmarker_lite.task";
 
-    /*
-     * Ini masih estimasi berbasis tinggi frame.
-     * Kalau ingin hasil tinggi badan lebih akurat dalam cm,
-     * sebaiknya gunakan marker / objek referensi seperti kertas A4, penggaris,
-     * atau ArUco marker sebagai pembanding ukuran nyata.
-     */
-    private static final double FRAME_REAL_HEIGHT_CM = 200.0;
-
     private ImageView imageViewMediaPipe;
     private Button btnPickMediaPipeImage;
     private Button btnProcessMediaPipe;
-    private Button btnSaveMediaPipe;
+
+    /*
+     * Di XML ID-nya masih btnSaveMediaPipe,
+     * tapi di Java ini fungsinya diganti jadi tombol Next.
+     */
+    private Button btnNextMeasurement;
 
     private Bitmap selectedBitmap;
     private Bitmap currentResultBitmap;
@@ -76,10 +74,23 @@ public class MediaPipeActivity extends AppCompatActivity {
                     return;
                 }
 
-                currentResultBitmap = selectedBitmap.copy(Bitmap.Config.ARGB_8888, true);
-                imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+                currentResultBitmap = null;
+                imageViewMediaPipe.setImageBitmap(selectedBitmap);
 
-                Toast.makeText(this, "Foto dipilih", Toast.LENGTH_SHORT).show();
+                /*
+                 * Kalau pilih foto baru dari galeri,
+                 * tombol Proses MediaPipe muncul lagi,
+                 * tombol Next disembunyikan dulu.
+                 */
+                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
+
+                Toast.makeText(
+                        this,
+                        "Foto dipilih. Silakan klik Proses MediaPipe",
+                        Toast.LENGTH_SHORT
+                ).show();
             });
 
     @Override
@@ -90,7 +101,18 @@ public class MediaPipeActivity extends AppCompatActivity {
         imageViewMediaPipe = findViewById(R.id.imageViewMediaPipe);
         btnPickMediaPipeImage = findViewById(R.id.btnPickMediaPipeImage);
         btnProcessMediaPipe = findViewById(R.id.btnProcessMediaPipe);
-        btnSaveMediaPipe = findViewById(R.id.btnSaveMediaPipe);
+        btnNextMeasurement = findViewById(R.id.btnSaveMediaPipe);
+
+        /*
+         * Default kalau masuk langsung dari MainActivity:
+         * tombol Pilih Foto dan Proses MediaPipe muncul,
+         * tombol Next disembunyikan dulu.
+         */
+        btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+        btnProcessMediaPipe.setVisibility(View.VISIBLE);
+
+        btnNextMeasurement.setText("Next");
+        btnNextMeasurement.setVisibility(View.GONE);
 
         if (!OpenCVLoader.initLocal()) {
             Toast.makeText(this, "OpenCV gagal diinisialisasi", Toast.LENGTH_LONG).show();
@@ -101,29 +123,203 @@ public class MediaPipeActivity extends AppCompatActivity {
         initPoseLandmarker();
 
         btnPickMediaPipeImage.setOnClickListener(v -> {
-            Toast.makeText(this, "Pilih foto", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Pilih foto dari galeri", Toast.LENGTH_SHORT).show();
             pickImageLauncher.launch("image/*");
         });
 
         btnProcessMediaPipe.setOnClickListener(v -> {
-            Toast.makeText(this, "Memproses MediaPipe", Toast.LENGTH_SHORT).show();
-
             if (selectedBitmap == null) {
-                Toast.makeText(this, "Pilih foto dulu", Toast.LENGTH_LONG).show();
+                Toast.makeText(
+                        this,
+                        "Gambar belum masuk. Pilih foto atau masuk dari Perspective dulu.",
+                        Toast.LENGTH_LONG
+                ).show();
                 return;
             }
 
+            btnNextMeasurement.setVisibility(View.GONE);
+
+            Toast.makeText(this, "Memproses MediaPipe", Toast.LENGTH_SHORT).show();
             processMediaPipePose();
         });
 
-        btnSaveMediaPipe.setOnClickListener(v -> {
-            if (currentResultBitmap == null) {
-                Toast.makeText(this, "Belum ada hasil untuk disimpan", Toast.LENGTH_LONG).show();
+        btnNextMeasurement.setOnClickListener(v -> openMeasurementActivity());
+
+        loadImageFromIntentIfAvailable();
+    }
+
+    private void loadImageFromIntentIfAvailable() {
+        try {
+            String imagePath = getIntent().getStringExtra("image_path");
+            String uriString = getIntent().getStringExtra("image_uri");
+            boolean autoProcess = getIntent().getBooleanExtra("auto_process", false);
+
+            boolean fromPerspective = imagePath != null && !imagePath.trim().isEmpty();
+
+            /*
+             * Kalau tidak ada image_path berarti bukan dari Perspective.
+             * User masuk langsung dari MainActivity.
+             */
+            if (!fromPerspective && (uriString == null || uriString.trim().isEmpty())) {
+                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
                 return;
             }
 
-            saveBitmapToAppFiles(currentResultBitmap);
-        });
+            if (fromPerspective) {
+                selectedBitmap = loadBitmapFromPath(imagePath);
+            } else {
+                selectedBitmap = loadAndRotateBitmap(Uri.parse(uriString));
+            }
+
+            if (selectedBitmap == null) {
+                Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_LONG).show();
+
+                if (fromPerspective) {
+                    btnPickMediaPipeImage.setVisibility(View.GONE);
+                } else {
+                    btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                }
+
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
+                return;
+            }
+
+            currentResultBitmap = null;
+            imageViewMediaPipe.setImageBitmap(selectedBitmap);
+
+            /*
+             * Saat gambar baru masuk:
+             * tombol Proses MediaPipe muncul,
+             * tombol Next belum muncul.
+             */
+            btnProcessMediaPipe.setVisibility(View.VISIBLE);
+            btnNextMeasurement.setVisibility(View.GONE);
+
+            if (fromPerspective) {
+                /*
+                 * Kalau masuk dari Perspective:
+                 * tombol Pilih Foto disembunyikan.
+                 */
+                btnPickMediaPipeImage.setVisibility(View.GONE);
+
+                Toast.makeText(
+                        this,
+                        "Gambar hasil perspective siap diproses",
+                        Toast.LENGTH_SHORT
+                ).show();
+
+            } else {
+                /*
+                 * Kalau masuk langsung dari MainActivity:
+                 * tombol Pilih Foto tetap muncul.
+                 */
+                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+
+                Toast.makeText(
+                        this,
+                        "Foto siap diproses",
+                        Toast.LENGTH_SHORT
+                ).show();
+            }
+
+            if (autoProcess) {
+                processMediaPipePose();
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "loadImageFromIntentIfAvailable error", e);
+            Toast.makeText(
+                    this,
+                    "Error membuka gambar: " + e.getMessage(),
+                    Toast.LENGTH_LONG
+            ).show();
+
+            btnProcessMediaPipe.setVisibility(View.VISIBLE);
+            btnNextMeasurement.setVisibility(View.GONE);
+        }
+    }
+
+    private Bitmap loadBitmapFromPath(String imagePath) {
+        try {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+
+            return BitmapFactory.decodeFile(imagePath, options);
+
+        } catch (Exception e) {
+            Log.e(TAG, "loadBitmapFromPath error", e);
+            return null;
+        }
+    }
+
+    private void openMeasurementActivity() {
+        if (currentResultBitmap == null) {
+            Toast.makeText(
+                    this,
+                    "Proses MediaPipe dulu sebelum lanjut ke Measurement",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+
+        String imageUriString = saveBitmapToCacheForMeasurement(currentResultBitmap);
+
+        if (imageUriString == null) {
+            Toast.makeText(this, "Gagal menyiapkan gambar untuk Measurement", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent intent = new Intent(MediaPipeActivity.this, MeasurementActivity.class);
+
+        /*
+         * Dikirim sebagai image_uri supaya MeasurementActivity bisa membuka gambar.
+         */
+        intent.putExtra("image_uri", imageUriString);
+
+        startActivity(intent);
+    }
+
+    private String saveBitmapToCacheForMeasurement(Bitmap bitmap) {
+        FileOutputStream fos = null;
+
+        try {
+            File cacheDir = new File(getCacheDir(), "mediapipe_result");
+
+            if (!cacheDir.exists()) {
+                cacheDir.mkdirs();
+            }
+
+            String fileName = new SimpleDateFormat(
+                    "yyyyMMdd_HHmmss",
+                    Locale.getDefault()
+            ).format(new Date());
+
+            File imageFile = new File(
+                    cacheDir,
+                    "MEDIAPIPE_TO_MEASUREMENT_" + fileName + ".png"
+            );
+
+            fos = new FileOutputStream(imageFile);
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            fos.flush();
+
+            return Uri.fromFile(imageFile).toString();
+
+        } catch (Exception e) {
+            Log.e(TAG, "saveBitmapToCacheForMeasurement error", e);
+            return null;
+
+        } finally {
+            if (fos != null) {
+                try {
+                    fos.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
     }
 
     @Override
@@ -153,6 +349,7 @@ public class MediaPipeActivity extends AppCompatActivity {
                             .build();
 
             poseLandmarker = PoseLandmarker.createFromOptions(this, options);
+
             Toast.makeText(this, "MediaPipe siap", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
@@ -167,8 +364,21 @@ public class MediaPipeActivity extends AppCompatActivity {
 
     private void processMediaPipePose() {
         try {
+            btnNextMeasurement.setVisibility(View.GONE);
+
             if (poseLandmarker == null) {
                 Toast.makeText(this, "PoseLandmarker belum siap", Toast.LENGTH_LONG).show();
+
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
+                return;
+            }
+
+            if (selectedBitmap == null) {
+                Toast.makeText(this, "Gambar belum tersedia", Toast.LENGTH_LONG).show();
+
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
                 return;
             }
 
@@ -180,6 +390,12 @@ public class MediaPipeActivity extends AppCompatActivity {
 
                 currentResultBitmap = drawError(selectedBitmap, "Tubuh tidak terdeteksi");
                 imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+
+                /*
+                 * Kalau gagal, user masih boleh proses ulang.
+                 */
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
                 return;
             }
 
@@ -188,11 +404,29 @@ public class MediaPipeActivity extends AppCompatActivity {
             if (landmarks.size() < 33) {
                 currentResultBitmap = drawError(selectedBitmap, "Landmark tubuh tidak lengkap");
                 imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+
+                /*
+                 * Kalau gagal, user masih boleh proses ulang.
+                 */
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
                 return;
             }
 
             currentResultBitmap = drawPoseAndHeight(selectedBitmap, landmarks);
             imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+
+            /*
+             * Setelah MediaPipe selesai dan berhasil:
+             * tombol Pilih Foto hilang,
+             * tombol Proses MediaPipe hilang,
+             * hanya tombol Next yang muncul.
+             */
+            btnPickMediaPipeImage.setVisibility(View.GONE);
+            btnProcessMediaPipe.setVisibility(View.GONE);
+            btnNextMeasurement.setVisibility(View.VISIBLE);
+
+            Toast.makeText(this, "MediaPipe selesai diproses", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
             Log.e(TAG, "processMediaPipePose error", e);
@@ -200,6 +434,12 @@ public class MediaPipeActivity extends AppCompatActivity {
 
             currentResultBitmap = drawError(selectedBitmap, "ERROR: " + e.getMessage());
             imageViewMediaPipe.setImageBitmap(currentResultBitmap);
+
+            /*
+             * Kalau error, user masih boleh proses ulang.
+             */
+            btnProcessMediaPipe.setVisibility(View.VISIBLE);
+            btnNextMeasurement.setVisibility(View.GONE);
         }
     }
 
@@ -213,15 +453,8 @@ public class MediaPipeActivity extends AppCompatActivity {
             int w = mat.cols();
             int h = mat.rows();
 
-            /*
-             * 1. Gambar koneksi skeleton.
-             */
             drawPoseConnections(mat, landmarks, w, h);
 
-            /*
-             * 2. Gambar titik landmark dan cari bounding box.
-             * Bounding box ini hanya untuk visual, bukan lagi dasar utama tinggi badan.
-             */
             double minX = Double.MAX_VALUE;
             double minY = Double.MAX_VALUE;
             double maxX = -Double.MAX_VALUE;
@@ -253,9 +486,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                 return drawError(source, "Landmark tidak valid");
             }
 
-            /*
-             * 3. Koreksi visual kepala dan kaki untuk bounding box.
-             */
             double bodyHeightPxRaw = maxY - minY;
             double headCorrectionPx = bodyHeightPxRaw * 0.08;
             double footCorrectionPx = bodyHeightPxRaw * 0.03;
@@ -268,9 +498,6 @@ public class MediaPipeActivity extends AppCompatActivity {
             int right = (int) Math.min(w - 1, maxX + 40);
             int bottom = (int) Math.min(h - 1, maxY);
 
-            /*
-             * 4. Gambar bounding box merah.
-             */
             Imgproc.rectangle(
                     mat,
                     new Point(left, top),
@@ -279,10 +506,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                     4
             );
 
-            /*
-             * 5. Gambar garis tinggi visual.
-             * Ini hanya garis bantu dari atas ke bawah tubuh.
-             */
             int centerX = (left + right) / 2;
 
             Imgproc.line(
@@ -310,29 +533,19 @@ public class MediaPipeActivity extends AppCompatActivity {
             );
 
             /*
-             * 6. Hitung tinggi badan menggunakan segment landmark tubuh.
-             * Ini lebih baik daripada hanya menggunakan tinggi bounding box.
-             */
-            double heightPxBySegment = estimateHeightPxBySegments(landmarks, w, h);
-
-            /*
-             * 7. Konversi pixel ke cm.
-             * Masih estimasi karena skala diambil dari tinggi frame.
-             */
-            double cmPerPixel = FRAME_REAL_HEIGHT_CM / h;
-            double heightCm = heightPxBySegment * cmPerPixel;
-
-            /*
-             * 8. Gambar garis segment utama yang dipakai untuk pengukuran.
+             * Tulisan tinggi estimasi sudah tidak ditampilkan.
+             * Output hanya landmark, garis pose, bounding box,
+             * dan garis segment tubuh.
              */
             drawMeasurementSegments(mat, landmarks, w, h);
 
-            drawHeader(mat, "TINGGI ESTIMASI: " + format1(heightCm) + " cm");
-            drawSmallText(mat, "MediaPipe Segment Measurement", new Point(20, 95));
+            Bitmap resultBitmap = Bitmap.createBitmap(
+                    mat.cols(),
+                    mat.rows(),
+                    Bitmap.Config.ARGB_8888
+            );
 
-            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(mat, resultBitmap);
-
             return resultBitmap;
 
         } catch (Exception e) {
@@ -344,100 +557,8 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    /*
-     * Algoritma utama:
-     * Tinggi badan dihitung dari panjang segment tubuh:
-     *
-     * kepala atas -> bahu tengah -> pinggul tengah -> lutut -> ankle -> kaki
-     *
-     * Kaki kiri dan kanan dihitung, lalu dirata-rata agar lebih stabil.
-     */
-    private double estimateHeightPxBySegments(List<NormalizedLandmark> landmarks, int w, int h) {
-        Point nose = landmarkToPoint(landmarks.get(0), w, h);
-
-        Point leftShoulder = landmarkToPoint(landmarks.get(11), w, h);
-        Point rightShoulder = landmarkToPoint(landmarks.get(12), w, h);
-
-        Point leftHip = landmarkToPoint(landmarks.get(23), w, h);
-        Point rightHip = landmarkToPoint(landmarks.get(24), w, h);
-
-        Point leftKnee = landmarkToPoint(landmarks.get(25), w, h);
-        Point rightKnee = landmarkToPoint(landmarks.get(26), w, h);
-
-        Point leftAnkle = landmarkToPoint(landmarks.get(27), w, h);
-        Point rightAnkle = landmarkToPoint(landmarks.get(28), w, h);
-
-        Point leftHeel = landmarkToPoint(landmarks.get(29), w, h);
-        Point rightHeel = landmarkToPoint(landmarks.get(30), w, h);
-
-        Point leftFoot = landmarkToPoint(landmarks.get(31), w, h);
-        Point rightFoot = landmarkToPoint(landmarks.get(32), w, h);
-
-        Point shoulderMid = midpoint(leftShoulder, rightShoulder);
-        Point hipMid = midpoint(leftHip, rightHip);
-
-        /*
-         * MediaPipe tidak punya titik ubun-ubun.
-         * Jadi titik kepala atas diperkirakan dari arah shoulderMid -> nose.
-         */
-        Point headTop = estimateHeadTop(nose, shoulderMid);
-
-        /*
-         * Segment kepala + leher.
-         */
-        double headAndNeck = distance(headTop, shoulderMid);
-
-        /*
-         * Segment badan.
-         */
-        double torso = distance(shoulderMid, hipMid);
-
-        /*
-         * Segment kaki kiri.
-         */
-        double leftFootPart = Math.max(
-                distance(leftAnkle, leftHeel),
-                distance(leftAnkle, leftFoot)
-        );
-
-        double leftLeg =
-                distance(leftHip, leftKnee)
-                        + distance(leftKnee, leftAnkle)
-                        + leftFootPart;
-
-        /*
-         * Segment kaki kanan.
-         */
-        double rightFootPart = Math.max(
-                distance(rightAnkle, rightHeel),
-                distance(rightAnkle, rightFoot)
-        );
-
-        double rightLeg =
-                distance(rightHip, rightKnee)
-                        + distance(rightKnee, rightAnkle)
-                        + rightFootPart;
-
-        /*
-         * Rata-rata kaki kiri dan kanan agar hasil lebih stabil.
-         */
-        double legAverage = (leftLeg + rightLeg) / 2.0;
-
-        return headAndNeck + torso + legAverage;
-    }
-
-    /*
-     * Estimasi titik kepala paling atas.
-     */
     private Point estimateHeadTop(Point nose, Point shoulderMid) {
         double noseToShoulder = distance(nose, shoulderMid);
-
-        /*
-         * Koreksi kepala atas.
-         * Nilai 0.45 bisa disesuaikan.
-         * Jika hasil terlalu pendek, naikkan ke 0.50 atau 0.55.
-         * Jika hasil terlalu tinggi, turunkan ke 0.35 atau 0.40.
-         */
         double headTopCorrection = noseToShoulder * 0.45;
 
         double dirX = nose.x - shoulderMid.x;
@@ -460,9 +581,6 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    /*
-     * Menggambar segment utama yang dipakai dalam perhitungan tinggi.
-     */
     private void drawMeasurementSegments(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
         try {
             Point nose = landmarkToPoint(landmarks.get(0), w, h);
@@ -513,32 +631,21 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    /*
-     * Menggambar koneksi antar landmark supaya tampak skeleton pose.
-     */
     private void drawPoseConnections(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
         int[][] connections = new int[][]{
-                // kepala / wajah sederhana
                 {0, 1}, {1, 2}, {2, 3}, {3, 7},
                 {0, 4}, {4, 5}, {5, 6}, {6, 8},
                 {9, 10},
 
-                // bahu
                 {11, 12},
 
-                // tangan kiri
                 {11, 13}, {13, 15},
-
-                // tangan kanan
                 {12, 14}, {14, 16},
 
-                // badan
                 {11, 23}, {12, 24}, {23, 24},
 
-                // kaki kiri
                 {23, 25}, {25, 27}, {27, 29}, {29, 31},
 
-                // kaki kanan
                 {24, 26}, {26, 28}, {28, 30}, {30, 32}
         };
 
@@ -622,7 +729,12 @@ public class MediaPipeActivity extends AppCompatActivity {
                     3
             );
 
-            Bitmap result = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
+            Bitmap result = Bitmap.createBitmap(
+                    mat.cols(),
+                    mat.rows(),
+                    Bitmap.Config.ARGB_8888
+            );
+
             Utils.matToBitmap(mat, result);
             return result;
 
@@ -632,48 +744,6 @@ public class MediaPipeActivity extends AppCompatActivity {
         } finally {
             mat.release();
         }
-    }
-
-    private void drawHeader(Mat mat, String text) {
-        Imgproc.rectangle(
-                mat,
-                new Point(0, 0),
-                new Point(mat.cols(), 70),
-                new Scalar(255, 255, 255, 230),
-                -1
-        );
-
-        Imgproc.putText(
-                mat,
-                text,
-                new Point(20, 48),
-                Imgproc.FONT_HERSHEY_SIMPLEX,
-                1.1,
-                new Scalar(0, 0, 255, 255),
-                3
-        );
-    }
-
-    private void drawSmallText(Mat mat, String text, Point pos) {
-        Imgproc.putText(
-                mat,
-                text,
-                pos,
-                Imgproc.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                new Scalar(255, 255, 255, 255),
-                4
-        );
-
-        Imgproc.putText(
-                mat,
-                text,
-                pos,
-                Imgproc.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                new Scalar(0, 0, 0, 255),
-                2
-        );
     }
 
     private Bitmap loadAndRotateBitmap(Uri imageUri) {
@@ -751,39 +821,5 @@ public class MediaPipeActivity extends AppCompatActivity {
             Log.e(TAG, "rotateBitmapIfRequired error", e);
             return bitmap;
         }
-    }
-
-    private void saveBitmapToAppFiles(Bitmap bitmap) {
-        try {
-            File picturesDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-
-            if (picturesDir != null && !picturesDir.exists()) {
-                picturesDir.mkdirs();
-            }
-
-            String fileName = new SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.getDefault()
-            ).format(new Date());
-
-            File imageFile = new File(picturesDir, "MP_" + fileName + ".jpg");
-
-            FileOutputStream fos = new FileOutputStream(imageFile);
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos);
-            fos.flush();
-            fos.close();
-
-            Log.d(TAG, "Saved MediaPipe image to: " + imageFile.getAbsolutePath());
-
-            Toast.makeText(this, "Hasil MediaPipe berhasil disimpan ke File", Toast.LENGTH_SHORT).show();
-
-        } catch (Exception e) {
-            Log.e(TAG, "saveBitmapToAppFiles error", e);
-            Toast.makeText(this, "Gagal menyimpan hasil: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private String format1(double value) {
-        return String.format(Locale.US, "%.1f", value);
     }
 }

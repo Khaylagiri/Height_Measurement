@@ -1,12 +1,13 @@
 package com.example.heightmeasurement;
 
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Environment;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.Toast;
@@ -81,6 +82,8 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     private Bitmap originalBitmap;
     private Bitmap currentBitmap;
 
+    private boolean perspectiveSuccess = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -92,6 +95,21 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
         imageViewResult.setScaleType(ImageView.ScaleType.FIT_CENTER);
         imageViewResult.setAdjustViewBounds(true);
+
+        /*
+         * Tombol awal namanya Perspective Correction.
+         * Tombol ini nanti hilang setelah perspective berhasil.
+         */
+        btnPerspective.setText("Perspective Correction");
+        btnPerspective.setVisibility(View.VISIBLE);
+
+        /*
+         * Tombol yang tadinya Simpan sekarang jadi Next.
+         * Tombol Next disembunyikan dulu.
+         * Nanti muncul setelah perspective berhasil.
+         */
+        btnSaveGalleryImage.setText("Next");
+        btnSaveGalleryImage.setVisibility(View.GONE);
 
         if (!OpenCVLoader.initLocal()) {
             Toast.makeText(this, "OpenCV gagal diinisialisasi", Toast.LENGTH_SHORT).show();
@@ -121,16 +139,18 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
         btnPerspective.setOnClickListener(v -> runPerspectiveOnly());
 
-        btnSaveGalleryImage.setOnClickListener(v -> {
-            if (currentBitmap != null) {
-                saveBitmapToAppFiles(currentBitmap);
-            }
-        });
+        /*
+         * Klik Next:
+         * hasil perspective dikirim ke MediaPipeActivity.
+         */
+        btnSaveGalleryImage.setOnClickListener(v -> openMediaPipeWithPerspectiveResult());
     }
 
     private void runPerspectiveOnly() {
         try {
             btnPerspective.setEnabled(false);
+            btnSaveGalleryImage.setVisibility(View.GONE);
+            perspectiveSuccess = false;
 
             Bitmap result = autoPerspectiveCamScannerStyle(originalBitmap);
 
@@ -140,11 +160,27 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                         "Perspective gagal. Pastikan marker ArUco terlihat jelas dan tidak terlalu tertutup badan.",
                         Toast.LENGTH_LONG
                 ).show();
+
+                btnPerspective.setVisibility(View.VISIBLE);
                 return;
             }
 
             currentBitmap = result;
             imageViewResult.setImageBitmap(currentBitmap);
+
+            perspectiveSuccess = true;
+
+            /*
+             * Setelah perspective berhasil:
+             * tombol Perspective Correction dihilangkan.
+             */
+            btnPerspective.setVisibility(View.GONE);
+
+            /*
+             * Setelah perspective berhasil:
+             * tombol Next dimunculkan.
+             */
+            btnSaveGalleryImage.setVisibility(View.VISIBLE);
 
             Toast.makeText(
                     this,
@@ -155,8 +191,78 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "runPerspectiveOnly error", e);
             Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+
+            btnPerspective.setVisibility(View.VISIBLE);
+
         } finally {
             btnPerspective.setEnabled(true);
+        }
+    }
+
+    private void openMediaPipeWithPerspectiveResult() {
+        if (!perspectiveSuccess || currentBitmap == null) {
+            Toast.makeText(this, "Jalankan perspective sampai berhasil dulu", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String imagePath = saveBitmapToCacheForMediaPipe(currentBitmap);
+
+        if (imagePath == null) {
+            Toast.makeText(this, "Gagal menyiapkan gambar untuk MediaPipe", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent intent = new Intent(PerspectiveCorrectionActivity.this, MediaPipeActivity.class);
+        intent.putExtra("image_path", imagePath);
+
+        /*
+         * false artinya:
+         * gambar hasil perspective langsung tampil di MediaPipe,
+         * tapi MediaPipe belum otomatis proses.
+         * Jadi user tinggal klik tombol Proses MediaPipe.
+         */
+        intent.putExtra("auto_process", false);
+
+        startActivity(intent);
+    }
+
+    private String saveBitmapToCacheForMediaPipe(Bitmap bitmap) {
+        FileOutputStream fos = null;
+
+        try {
+            File cacheDir = new File(getCacheDir(), "perspective_result");
+
+            if (!cacheDir.exists()) {
+                cacheDir.mkdirs();
+            }
+
+            String fileName = new SimpleDateFormat(
+                    "yyyyMMdd_HHmmss",
+                    Locale.getDefault()
+            ).format(new Date());
+
+            File imageFile = new File(
+                    cacheDir,
+                    "PERSPECTIVE_TO_MEDIAPIPE_" + fileName + ".png"
+            );
+
+            fos = new FileOutputStream(imageFile);
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            fos.flush();
+
+            return imageFile.getAbsolutePath();
+
+        } catch (Exception e) {
+            Log.e(TAG, "saveBitmapToCacheForMediaPipe error", e);
+            return null;
+
+        } finally {
+            if (fos != null) {
+                try {
+                    fos.close();
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 
@@ -253,7 +359,6 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             );
 
             shiftedWarped = shiftResultX(warped, RESULT_SHIFT_X_PX);
-
             croppedWarped = cropHorizontalBlankBorders(shiftedWarped);
 
             Bitmap result = Bitmap.createBitmap(
@@ -268,6 +373,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "autoPerspectiveCamScannerStyle error", e);
             return null;
+
         } finally {
             for (Mat c : corners) {
                 c.release();
@@ -277,8 +383,13 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                 r.release();
             }
 
-            if (imagePointsMat != null) imagePointsMat.release();
-            if (boardPointsMat != null) boardPointsMat.release();
+            if (imagePointsMat != null) {
+                imagePointsMat.release();
+            }
+
+            if (boardPointsMat != null) {
+                boardPointsMat.release();
+            }
 
             ids.release();
             homography.release();
@@ -418,7 +529,9 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     }
 
     private Point[] orderCornersTopLeftTopRightBottomRightBottomLeft(Point[] pts) {
-        if (pts == null || pts.length != 4) return null;
+        if (pts == null || pts.length != 4) {
+            return null;
+        }
 
         Point tl = null;
         Point tr = null;
@@ -464,6 +577,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private Point[] getMarkerWorldCorners(int id) {
         Point center = getMarkerWorldCenter(id);
+
         if (center == null) {
             return null;
         }
@@ -690,37 +804,6 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "rotateBitmapIfRequired error", e);
             return bitmap;
-        }
-    }
-
-    private void saveBitmapToAppFiles(Bitmap bitmap) {
-        try {
-            File picturesDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-
-            if (picturesDir != null && !picturesDir.exists()) {
-                picturesDir.mkdirs();
-            }
-
-            String fileName = new SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.getDefault()
-            ).format(new Date());
-
-            File imageFile = new File(
-                    picturesDir,
-                    "PERSPECTIVE_" + fileName + ".jpg"
-            );
-
-            FileOutputStream fos = new FileOutputStream(imageFile);
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos);
-            fos.flush();
-            fos.close();
-
-            Toast.makeText(this, "Gambar berhasil disimpan", Toast.LENGTH_SHORT).show();
-
-        } catch (Exception e) {
-            Log.e(TAG, "saveBitmapToAppFiles error", e);
-            Toast.makeText(this, "Gagal menyimpan gambar", Toast.LENGTH_SHORT).show();
         }
     }
 }
