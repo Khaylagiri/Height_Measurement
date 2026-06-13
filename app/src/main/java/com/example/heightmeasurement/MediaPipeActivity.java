@@ -48,11 +48,6 @@ public class MediaPipeActivity extends AppCompatActivity {
     private ImageView imageViewMediaPipe;
     private Button btnPickMediaPipeImage;
     private Button btnProcessMediaPipe;
-
-    /*
-     * Di XML ID-nya masih btnSaveMediaPipe,
-     * tapi di Java ini fungsinya diganti jadi tombol Next.
-     */
     private Button btnNextMeasurement;
 
     private Bitmap selectedBitmap;
@@ -77,11 +72,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                 currentResultBitmap = null;
                 imageViewMediaPipe.setImageBitmap(selectedBitmap);
 
-                /*
-                 * Kalau pilih foto baru dari galeri,
-                 * tombol Proses MediaPipe muncul lagi,
-                 * tombol Next disembunyikan dulu.
-                 */
                 btnPickMediaPipeImage.setVisibility(View.VISIBLE);
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
                 btnNextMeasurement.setVisibility(View.GONE);
@@ -103,11 +93,6 @@ public class MediaPipeActivity extends AppCompatActivity {
         btnProcessMediaPipe = findViewById(R.id.btnProcessMediaPipe);
         btnNextMeasurement = findViewById(R.id.btnSaveMediaPipe);
 
-        /*
-         * Default kalau masuk langsung dari MainActivity:
-         * tombol Pilih Foto dan Proses MediaPipe muncul,
-         * tombol Next disembunyikan dulu.
-         */
         btnPickMediaPipeImage.setVisibility(View.VISIBLE);
         btnProcessMediaPipe.setVisibility(View.VISIBLE);
 
@@ -156,10 +141,6 @@ public class MediaPipeActivity extends AppCompatActivity {
 
             boolean fromPerspective = imagePath != null && !imagePath.trim().isEmpty();
 
-            /*
-             * Kalau tidak ada image_path berarti bukan dari Perspective.
-             * User masuk langsung dari MainActivity.
-             */
             if (!fromPerspective && (uriString == null || uriString.trim().isEmpty())) {
                 btnPickMediaPipeImage.setVisibility(View.VISIBLE);
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
@@ -190,19 +171,10 @@ public class MediaPipeActivity extends AppCompatActivity {
             currentResultBitmap = null;
             imageViewMediaPipe.setImageBitmap(selectedBitmap);
 
-            /*
-             * Saat gambar baru masuk:
-             * tombol Proses MediaPipe muncul,
-             * tombol Next belum muncul.
-             */
             btnProcessMediaPipe.setVisibility(View.VISIBLE);
             btnNextMeasurement.setVisibility(View.GONE);
 
             if (fromPerspective) {
-                /*
-                 * Kalau masuk dari Perspective:
-                 * tombol Pilih Foto disembunyikan.
-                 */
                 btnPickMediaPipeImage.setVisibility(View.GONE);
 
                 Toast.makeText(
@@ -212,10 +184,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                 ).show();
 
             } else {
-                /*
-                 * Kalau masuk langsung dari MainActivity:
-                 * tombol Pilih Foto tetap muncul.
-                 */
                 btnPickMediaPipeImage.setVisibility(View.VISIBLE);
 
                 Toast.makeText(
@@ -265,7 +233,14 @@ public class MediaPipeActivity extends AppCompatActivity {
             return;
         }
 
-        String imageUriString = saveBitmapToCacheForMeasurement(currentResultBitmap);
+        /*
+         * PENTING:
+         * Yang dikirim ke MeasurementActivity adalah selectedBitmap,
+         * yaitu gambar bersih hasil perspective.
+         *
+         * Jangan kirim currentResultBitmap karena itu sudah ada gambar titik/garis MediaPipe.
+         */
+        String imageUriString = saveBitmapToCacheForMeasurement(selectedBitmap);
 
         if (imageUriString == null) {
             Toast.makeText(this, "Gagal menyiapkan gambar untuk Measurement", Toast.LENGTH_LONG).show();
@@ -273,12 +248,7 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
 
         Intent intent = new Intent(MediaPipeActivity.this, MeasurementActivity.class);
-
-        /*
-         * Dikirim sebagai image_uri supaya MeasurementActivity bisa membuka gambar.
-         */
         intent.putExtra("image_uri", imageUriString);
-
         startActivity(intent);
     }
 
@@ -391,9 +361,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                 currentResultBitmap = drawError(selectedBitmap, "Tubuh tidak terdeteksi");
                 imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
-                /*
-                 * Kalau gagal, user masih boleh proses ulang.
-                 */
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
                 btnNextMeasurement.setVisibility(View.GONE);
                 return;
@@ -405,9 +372,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                 currentResultBitmap = drawError(selectedBitmap, "Landmark tubuh tidak lengkap");
                 imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
-                /*
-                 * Kalau gagal, user masih boleh proses ulang.
-                 */
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
                 btnNextMeasurement.setVisibility(View.GONE);
                 return;
@@ -416,12 +380,6 @@ public class MediaPipeActivity extends AppCompatActivity {
             currentResultBitmap = drawPoseAndHeight(selectedBitmap, landmarks);
             imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
-            /*
-             * Setelah MediaPipe selesai dan berhasil:
-             * tombol Pilih Foto hilang,
-             * tombol Proses MediaPipe hilang,
-             * hanya tombol Next yang muncul.
-             */
             btnPickMediaPipeImage.setVisibility(View.GONE);
             btnProcessMediaPipe.setVisibility(View.GONE);
             btnNextMeasurement.setVisibility(View.VISIBLE);
@@ -435,9 +393,6 @@ public class MediaPipeActivity extends AppCompatActivity {
             currentResultBitmap = drawError(selectedBitmap, "ERROR: " + e.getMessage());
             imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
-            /*
-             * Kalau error, user masih boleh proses ulang.
-             */
             btnProcessMediaPipe.setVisibility(View.VISIBLE);
             btnNextMeasurement.setVisibility(View.GONE);
         }
@@ -533,9 +488,8 @@ public class MediaPipeActivity extends AppCompatActivity {
             );
 
             /*
-             * Tulisan tinggi estimasi sudah tidak ditampilkan.
-             * Output hanya landmark, garis pose, bounding box,
-             * dan garis segment tubuh.
+             * Tidak menampilkan tulisan tinggi di halaman MediaPipe.
+             * Halaman ini hanya untuk validasi pose/landmark.
              */
             drawMeasurementSegments(mat, landmarks, w, h);
 

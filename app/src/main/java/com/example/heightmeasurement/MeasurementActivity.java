@@ -48,27 +48,36 @@ public class MeasurementActivity extends AppCompatActivity {
     private static final String MODEL_ASSET_PATH = "pose_landmarker_lite.task";
 
     /*
-     * Ukuran asli 1 cell/kotak besar pada board.
+     * PENTING:
+     * Karena kamu bilang panjang marker/board vertikal = 200 cm,
+     * maka skala tinggi dihitung dari tinggi gambar hasil perspective correction.
      *
-     * Dari hasil uji kamu:
-     * hPix skeleton = 1969.4 px
-     * tinggi asli sekitar 160 cm
-     *
-     * REAL_CELL_SIZE_CM = 160 * 120 / 1969.4 = 9.75 cm
+     * Rumus:
+     * cmPerPixel = BOARD_REAL_HEIGHT_CM / tinggiBoardDalamPixel
      */
-    private static final double REAL_CELL_SIZE_CM = 9.75;
+    private static final double BOARD_REAL_HEIGHT_CM = 200.0;
 
     /*
-     * Harus sama dengan PX_PER_CELL di PerspectiveCorrectionActivity.
+     * Kalau hasil PerspectiveCorrectionActivity benar-benar hanya berisi area board 200 cm,
+     * biarkan TOP dan BOTTOM margin = 0.
+     *
+     * Kalau output perspective kamu ternyata ada tambahan area putih/extra di atas atau bawah,
+     * isi margin pixel-nya di sini.
+     *
+     * Contoh:
+     * kalau ada 80 px tambahan atas dan 120 px tambahan bawah:
+     * BOARD_TOP_MARGIN_PX = 80
+     * BOARD_BOTTOM_MARGIN_PX = 120
      */
-    private static final double PX_PER_CELL = 120.0;
+    private static final int BOARD_TOP_MARGIN_PX = 0;
+    private static final int BOARD_BOTTOM_MARGIN_PX = 0;
 
     /*
-     * Faktor kalibrasi tambahan.
+     * Kalibrasi akhir.
+     *
      * Biarkan 1.0 dulu.
-     *
-     * Kalau nanti hasil masih beda sedikit:
-     * HEIGHT_CALIBRATION_FACTOR = tinggi_asli / hasil_aplikasi
+     * Kalau hasil aplikasi 158 cm padahal asli 160 cm:
+     * HEIGHT_CALIBRATION_FACTOR = 160.0 / 158.0
      */
     private static final double HEIGHT_CALIBRATION_FACTOR = 1.0;
 
@@ -108,7 +117,7 @@ public class MeasurementActivity extends AppCompatActivity {
 
         String uriString = getIntent().getStringExtra("image_uri");
 
-        if (uriString == null) {
+        if (uriString == null || uriString.trim().isEmpty()) {
             Toast.makeText(this, "Gambar tidak ditemukan", Toast.LENGTH_SHORT).show();
             finish();
             return;
@@ -178,6 +187,8 @@ public class MeasurementActivity extends AppCompatActivity {
     }
 
     private void runMeasurementPipeline() {
+        ContourResult contourResult = null;
+
         try {
             if (originalBitmap == null) {
                 Toast.makeText(this, "Gambar belum tersedia", Toast.LENGTH_SHORT).show();
@@ -210,52 +221,61 @@ public class MeasurementActivity extends AppCompatActivity {
                 return;
             }
 
-            /*
-             * Contour tetap diproses, tapi tidak dijadikan hasil utama.
-             * Ini supaya rambut, hijab, aksesoris, baju longgar, atau bayangan
-             * tidak membuat tinggi badan menjadi salah.
-             */
-            ContourResult contourResult = runContourProcess(workingBitmap, landmarks);
+            contourResult = runContourProcess(workingBitmap, landmarks);
 
-            /*
-             * Hasil utama memakai skeleton landmark MediaPipe.
-             */
-            SkeletonMeasurement skeletonMeasurement = estimateRobustSkeletonHeightPx(
+            BodyMeasurement measurement = estimateBodyMeasurement(
                     landmarks,
                     workingBitmap.getWidth(),
                     workingBitmap.getHeight(),
                     contourResult
             );
 
-            double heightCm = pixelToCm(skeletonMeasurement.totalHeightPx);
+            PoseValidation validation = validatePose(
+                    measurement,
+                    workingBitmap.getWidth(),
+                    workingBitmap.getHeight()
+            );
 
-            double contourCm = 0.0;
-            if (contourResult.valid) {
-                contourCm = pixelToCm(contourResult.heightPx);
-            }
+            int imageHeightPx = workingBitmap.getHeight();
+
+            double verticalCm = pixelToCm(measurement.verticalHeightPx, imageHeightPx);
+            double skeletonCm = pixelToCm(measurement.totalSkeletonPx, imageHeightPx);
+            double contourCm = contourResult.valid
+                    ? pixelToCm(contourResult.heightPx, imageHeightPx)
+                    : 0.0;
 
             currentBitmap = drawFinalMeasurement(
                     workingBitmap,
                     landmarks,
                     contourResult,
-                    skeletonMeasurement,
-                    heightCm,
-                    contourCm
+                    measurement,
+                    validation,
+                    verticalCm,
+                    skeletonCm,
+                    contourCm,
+                    imageHeightPx
             );
 
             imageViewMeasurement.setImageBitmap(currentBitmap);
 
+            String statusText = validation.valid
+                    ? "Pose valid"
+                    : "Pose kurang ideal: " + validation.message;
+
             tvMeasurementResult.setText(
-                    "Tinggi badan: " + format1(heightCm) + " cm\n" +
-                            "Metode utama: MediaPipe skeleton landmark\n" +
-                            "hPix skeleton: " + format1(skeletonMeasurement.totalHeightPx) + " px\n" +
-                            "Skala: 1 cell = " + format1(REAL_CELL_SIZE_CM) + " cm"
+                    "Tinggi badan: " + format1(verticalCm) + " cm\n" +
+                            "Metode utama: vertikal head-to-foot landmark\n" +
+                            "hPix vertical: " + format1(measurement.verticalHeightPx) + " px\n" +
+                            "Skeleton validasi: " + format1(skeletonCm) + " cm\n" +
+                            "Skala: tinggi board = " + format1(BOARD_REAL_HEIGHT_CM) + " cm\n" +
+                            "Board pixel height: " + getBoardPixelHeight(imageHeightPx) + " px\n" +
+                            statusText
             );
 
-            Toast.makeText(this, "Tinggi badan berhasil dihitung", Toast.LENGTH_SHORT).show();
-
-            if (contourResult.contour != null) {
-                contourResult.contour.release();
+            if (validation.valid) {
+                Toast.makeText(this, "Tinggi badan berhasil dihitung", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Hasil keluar, tapi pose kurang ideal", Toast.LENGTH_LONG).show();
             }
 
         } catch (Exception e) {
@@ -268,24 +288,30 @@ public class MeasurementActivity extends AppCompatActivity {
             }
 
             tvMeasurementResult.setText("Gagal menghitung tinggi badan");
+
+        } finally {
+            if (contourResult != null && contourResult.contour != null) {
+                contourResult.contour.release();
+            }
         }
     }
 
-    private double pixelToCm(double heightPx) {
+    private int getBoardPixelHeight(int imageHeightPx) {
+        int boardPixelHeight = imageHeightPx - BOARD_TOP_MARGIN_PX - BOARD_BOTTOM_MARGIN_PX;
+        return Math.max(1, boardPixelHeight);
+    }
+
+    private double pixelToCm(double heightPx, int imageHeightPx) {
         /*
-         * hPix -> cm
-         *
-         * PerspectiveCorrectionActivity membuat skala:
-         * 1 cell = 120 px
-         *
-         * Maka:
-         * cmPerPixel = REAL_CELL_SIZE_CM / PX_PER_CELL
+         * Karena board vertikal asli = 200 cm,
+         * maka skala cm/pixel dihitung dari tinggi board pada gambar hasil perspective.
          */
-        double cmPerPixel = REAL_CELL_SIZE_CM / PX_PER_CELL;
+        double boardPixelHeight = getBoardPixelHeight(imageHeightPx);
+        double cmPerPixel = BOARD_REAL_HEIGHT_CM / boardPixelHeight;
         return heightPx * cmPerPixel * HEIGHT_CALIBRATION_FACTOR;
     }
 
-    private SkeletonMeasurement estimateRobustSkeletonHeightPx(
+    private BodyMeasurement estimateBodyMeasurement(
             List<NormalizedLandmark> landmarks,
             int imageWidth,
             int imageHeight,
@@ -325,13 +351,12 @@ public class MeasurementActivity extends AppCompatActivity {
         Point eyeMid = midpoint(eyeMid1, eyeMid2);
 
         Point earMid = midpoint(leftEar, rightEar);
-
         Point shoulderMid = midpoint(leftShoulder, rightShoulder);
         Point hipMid = midpoint(leftHip, rightHip);
 
         /*
-         * Head top anatomi diestimasi dari titik wajah dan bahu.
-         * Bukan dari batas rambut/hijab/aksesoris.
+         * Estimasi puncak kepala anatomi.
+         * Tidak mengambil batas rambut/hijab/topi/aksesoris.
          */
         Point headTop = estimateAnatomicalHeadTop(
                 nose,
@@ -341,21 +366,37 @@ public class MeasurementActivity extends AppCompatActivity {
         );
 
         /*
-         * Contour hanya boleh membantu sedikit jika batas atas masih masuk akal.
-         * Jika contour terlalu tinggi akibat rambut/hijab/aksesoris, diabaikan.
+         * Contour hanya boleh mengoreksi sedikit jika sangat dekat dengan headTop.
+         * Kalau contour terlalu tinggi, dianggap rambut/hijab/aksesoris dan diabaikan.
          */
         if (contourResult != null && contourResult.valid && contourResult.bodyRect != null) {
             double contourTop = contourResult.bodyRect.y;
             double anatomicalTop = headTop.y;
+            double maxAllowedCorrectionPx = distance(eyeMid, shoulderMid) * 0.06;
 
-            double maxAllowedCorrectionPx = distance(eyeMid, shoulderMid) * 0.12;
-
-            if (contourTop < anatomicalTop &&
-                    anatomicalTop - contourTop <= maxAllowedCorrectionPx) {
+            if (contourTop < anatomicalTop && anatomicalTop - contourTop <= maxAllowedCorrectionPx) {
                 headTop = new Point(headTop.x, contourTop);
             }
         }
 
+        Point footBottom = getFootBottomPoint(
+                leftAnkle,
+                rightAnkle,
+                leftHeel,
+                rightHeel,
+                leftFootIndex,
+                rightFootIndex
+        );
+
+        /*
+         * Hasil utama:
+         * tinggi vertikal seperti stadiometer.
+         */
+        double verticalHeightPx = Math.abs(footBottom.y - headTop.y);
+
+        /*
+         * Skeleton hanya validasi/pembanding.
+         */
         double headNeckPx = distance(headTop, shoulderMid);
         double torsoPx = distance(shoulderMid, hipMid);
 
@@ -369,15 +410,19 @@ public class MeasurementActivity extends AppCompatActivity {
 
         double leftLegPx = leftUpperLegPx + leftLowerLegPx + leftFootPx;
         double rightLegPx = rightUpperLegPx + rightLowerLegPx + rightFootPx;
-
         double legPx = robustAverageLeg(leftLegPx, rightLegPx);
+        double totalSkeletonPx = headNeckPx + torsoPx + legPx;
 
-        SkeletonMeasurement measurement = new SkeletonMeasurement();
+        BodyMeasurement measurement = new BodyMeasurement();
 
         measurement.headTop = headTop;
         measurement.eyeMid = eyeMid;
         measurement.shoulderMid = shoulderMid;
         measurement.hipMid = hipMid;
+        measurement.footBottom = footBottom;
+
+        measurement.leftShoulder = leftShoulder;
+        measurement.rightShoulder = rightShoulder;
 
         measurement.leftHip = leftHip;
         measurement.leftKnee = leftKnee;
@@ -396,7 +441,8 @@ public class MeasurementActivity extends AppCompatActivity {
         measurement.leftLegPx = leftLegPx;
         measurement.rightLegPx = rightLegPx;
         measurement.legPx = legPx;
-        measurement.totalHeightPx = headNeckPx + torsoPx + legPx;
+        measurement.verticalHeightPx = verticalHeightPx;
+        measurement.totalSkeletonPx = totalSkeletonPx;
 
         return measurement;
     }
@@ -407,15 +453,10 @@ public class MeasurementActivity extends AppCompatActivity {
             Point earMid,
             Point shoulderMid
     ) {
-        /*
-         * Estimasi puncak kepala mengikuti arah tubuh.
-         * Ini lebih robust untuk pose miring daripada hanya mengurangi koordinat Y.
-         */
         Point faceCenter = midpoint(nose, eyeMid);
 
         double dirX = faceCenter.x - shoulderMid.x;
         double dirY = faceCenter.y - shoulderMid.y;
-
         double len = Math.sqrt(dirX * dirX + dirY * dirY);
 
         if (len <= 0.0001) {
@@ -427,13 +468,13 @@ public class MeasurementActivity extends AppCompatActivity {
         dirY /= len;
 
         /*
-         * Koreksi anatomi kepala.
-         * Nilai ini tidak mengambil rambut/hijab/topi.
+         * Koreksi puncak kepala anatomi.
+         * Kalau hasil tinggi terlalu pendek secara konsisten, angka ini boleh dinaikkan sedikit.
+         * Kalau terlalu tinggi, angka ini boleh diturunkan sedikit.
          */
         double eyeToShoulder = distance(eyeMid, shoulderMid);
         double earToEye = distance(earMid, eyeMid);
-
-        double correction = eyeToShoulder * 0.32 + earToEye * 0.18;
+        double correction = eyeToShoulder * 0.28 + earToEye * 0.15;
 
         return new Point(
                 faceCenter.x + dirX * correction,
@@ -441,10 +482,21 @@ public class MeasurementActivity extends AppCompatActivity {
         );
     }
 
+    private Point getFootBottomPoint(Point... points) {
+        Point bottom = points[0];
+
+        for (Point p : points) {
+            if (p.y > bottom.y) {
+                bottom = p;
+            }
+        }
+
+        return bottom;
+    }
+
     private double estimateFootExtension(Point ankle, Point heel, Point footIndex) {
         double ankleToHeel = distance(ankle, heel);
         double ankleToFoot = distance(ankle, footIndex);
-
         return Math.max(ankleToHeel, ankleToFoot);
     }
 
@@ -458,11 +510,6 @@ public class MeasurementActivity extends AppCompatActivity {
 
         double ratio = max / min;
 
-        /*
-         * Kalau dua kaki mirip, pakai rata-rata.
-         * Kalau berbeda jauh, pakai yang lebih panjang karena sisi pendek
-         * biasanya disebabkan landmark tertutup atau kaki terdeteksi kurang stabil.
-         */
         if (ratio <= 1.25) {
             return (leftLegPx + rightLegPx) / 2.0;
         } else {
@@ -470,10 +517,49 @@ public class MeasurementActivity extends AppCompatActivity {
         }
     }
 
-    private ContourResult runContourProcess(
-            Bitmap bitmap,
-            List<NormalizedLandmark> landmarks
-    ) {
+    private PoseValidation validatePose(BodyMeasurement measurement, int imageWidth, int imageHeight) {
+        PoseValidation validation = new PoseValidation();
+        validation.valid = true;
+        validation.message = "OK";
+
+        if (!isInside(measurement.headTop, imageWidth, imageHeight) ||
+                !isInside(measurement.footBottom, imageWidth, imageHeight)) {
+            validation.valid = false;
+            validation.message = "kepala atau kaki keluar frame";
+            return validation;
+        }
+
+        double shoulderTilt = Math.abs(measurement.leftShoulder.y - measurement.rightShoulder.y);
+        double shoulderWidth = Math.max(1.0, distance(measurement.leftShoulder, measurement.rightShoulder));
+
+        double hipTilt = Math.abs(measurement.leftHip.y - measurement.rightHip.y);
+        double hipWidth = Math.max(1.0, distance(measurement.leftHip, measurement.rightHip));
+
+        double verticalVsSkeletonDiff = Math.abs(measurement.verticalHeightPx - measurement.totalSkeletonPx) /
+                Math.max(1.0, measurement.verticalHeightPx);
+
+        if (shoulderTilt / shoulderWidth > 0.35) {
+            validation.valid = false;
+            validation.message = "bahu terlalu miring";
+            return validation;
+        }
+
+        if (hipTilt / hipWidth > 0.35) {
+            validation.valid = false;
+            validation.message = "pinggul terlalu miring";
+            return validation;
+        }
+
+        if (verticalVsSkeletonDiff > 0.35) {
+            validation.valid = false;
+            validation.message = "pose kurang tegak atau landmark kaki/kepala kurang stabil";
+            return validation;
+        }
+
+        return validation;
+    }
+
+    private ContourResult runContourProcess(Bitmap bitmap, List<NormalizedLandmark> landmarks) {
         Mat src = new Mat();
         Mat gray = new Mat();
         Mat blur = new Mat();
@@ -495,14 +581,9 @@ public class MeasurementActivity extends AppCompatActivity {
             }
 
             Imgproc.GaussianBlur(gray, blur, new Size(5, 5), 0);
-
             Imgproc.Canny(blur, edges, 45, 140);
 
-            Mat kernel = Imgproc.getStructuringElement(
-                    Imgproc.MORPH_RECT,
-                    new Size(7, 7)
-            );
-
+            Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(7, 7));
             Imgproc.dilate(edges, dilated, kernel);
             kernel.release();
 
@@ -594,12 +675,7 @@ public class MeasurementActivity extends AppCompatActivity {
         }
     }
 
-    private Rect getPoseBoundingRect(
-            List<NormalizedLandmark> landmarks,
-            int imageWidth,
-            int imageHeight,
-            int padding
-    ) {
+    private Rect getPoseBoundingRect(List<NormalizedLandmark> landmarks, int imageWidth, int imageHeight, int padding) {
         double minX = Double.MAX_VALUE;
         double minY = Double.MAX_VALUE;
         double maxX = -Double.MAX_VALUE;
@@ -643,19 +719,22 @@ public class MeasurementActivity extends AppCompatActivity {
         int x2 = Math.min(a.x + a.width, b.x + b.width);
         int y2 = Math.min(a.y + a.height, b.y + b.height);
 
-        int w = Math.max(0, x2 - x1);
-        int h = Math.max(0, y2 - y1);
+        int width = Math.max(0, x2 - x1);
+        int height = Math.max(0, y2 - y1);
 
-        return w * h;
+        return width * height;
     }
 
     private Bitmap drawFinalMeasurement(
             Bitmap source,
             List<NormalizedLandmark> landmarks,
             ContourResult contourResult,
-            SkeletonMeasurement skeletonMeasurement,
+            BodyMeasurement measurement,
+            PoseValidation validation,
             double heightCm,
-            double contourCm
+            double skeletonCm,
+            double contourCm,
+            int imageHeightPx
     ) {
         Mat mat = new Mat();
 
@@ -693,35 +772,30 @@ public class MeasurementActivity extends AppCompatActivity {
             }
 
             drawPoseConnections(mat, landmarks, w, h);
-            drawMeasurementSegments(mat, skeletonMeasurement);
+            drawMeasurementSegments(mat, measurement);
 
             for (NormalizedLandmark lm : landmarks) {
                 Point p = landmarkToPoint(lm, w, h);
 
                 if (isInside(p, w, h)) {
-                    Imgproc.circle(
-                            mat,
-                            p,
-                            5,
-                            new Scalar(0, 255, 0, 255),
-                            -1
-                    );
+                    Imgproc.circle(mat, p, 5, new Scalar(0, 255, 0, 255), -1);
                 }
             }
+
+            String subtitle = "Vertical: " + format1(measurement.verticalHeightPx) +
+                    " px | Board: " + getBoardPixelHeight(imageHeightPx) +
+                    " px = " + format1(BOARD_REAL_HEIGHT_CM) + " cm";
+
+            String status = validation.valid ? "Pose valid" : "Pose kurang ideal: " + validation.message;
 
             drawResultHeader(
                     mat,
                     "TINGGI BADAN: " + format1(heightCm) + " cm",
-                    "Skeleton: " + format1(skeletonMeasurement.totalHeightPx) +
-                            " px | Contour validasi: " + format1(contourCm) + " cm"
+                    subtitle,
+                    status
             );
 
-            Bitmap resultBitmap = Bitmap.createBitmap(
-                    mat.cols(),
-                    mat.rows(),
-                    Bitmap.Config.ARGB_8888
-            );
-
+            Bitmap resultBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(mat, resultBitmap);
             return resultBitmap;
 
@@ -734,11 +808,11 @@ public class MeasurementActivity extends AppCompatActivity {
         }
     }
 
-    private void drawResultHeader(Mat mat, String title, String subtitle) {
+    private void drawResultHeader(Mat mat, String title, String subtitle, String status) {
         Imgproc.rectangle(
                 mat,
                 new Point(0, 0),
-                new Point(mat.cols(), 125),
+                new Point(mat.cols(), 165),
                 new Scalar(255, 255, 255, 235),
                 -1
         );
@@ -746,9 +820,9 @@ public class MeasurementActivity extends AppCompatActivity {
         Imgproc.putText(
                 mat,
                 title,
-                new Point(24, 50),
+                new Point(24, 48),
                 Imgproc.FONT_HERSHEY_SIMPLEX,
-                1.1,
+                1.05,
                 new Scalar(0, 0, 255, 255),
                 3
         );
@@ -756,10 +830,20 @@ public class MeasurementActivity extends AppCompatActivity {
         Imgproc.putText(
                 mat,
                 subtitle,
-                new Point(24, 95),
+                new Point(24, 92),
                 Imgproc.FONT_HERSHEY_SIMPLEX,
-                0.72,
+                0.65,
                 new Scalar(0, 0, 0, 255),
+                2
+        );
+
+        Imgproc.putText(
+                mat,
+                status,
+                new Point(24, 132),
+                Imgproc.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                new Scalar(0, 90, 255, 255),
                 2
         );
     }
@@ -789,12 +873,7 @@ public class MeasurementActivity extends AppCompatActivity {
                     3
             );
 
-            Bitmap result = Bitmap.createBitmap(
-                    mat.cols(),
-                    mat.rows(),
-                    Bitmap.Config.ARGB_8888
-            );
-
+            Bitmap result = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(mat, result);
             return result;
 
@@ -806,41 +885,40 @@ public class MeasurementActivity extends AppCompatActivity {
         }
     }
 
-    private void drawMeasurementSegments(
-            Mat mat,
-            SkeletonMeasurement measurement
-    ) {
+    private void drawMeasurementSegments(Mat mat, BodyMeasurement measurement) {
         try {
-            Scalar segmentColor = new Scalar(255, 0, 255, 255);
+            Scalar skeletonColor = new Scalar(255, 0, 255, 255);
+            Scalar heightColor = new Scalar(0, 0, 255, 255);
 
-            Imgproc.line(mat, measurement.headTop, measurement.shoulderMid, segmentColor, 5);
-            Imgproc.line(mat, measurement.shoulderMid, measurement.hipMid, segmentColor, 5);
+            Imgproc.line(mat, measurement.headTop, measurement.shoulderMid, skeletonColor, 4);
+            Imgproc.line(mat, measurement.shoulderMid, measurement.hipMid, skeletonColor, 4);
 
-            Imgproc.line(mat, measurement.leftHip, measurement.leftKnee, segmentColor, 5);
-            Imgproc.line(mat, measurement.leftKnee, measurement.leftAnkle, segmentColor, 5);
-            Imgproc.line(mat, measurement.leftAnkle, measurement.leftHeel, segmentColor, 5);
-            Imgproc.line(mat, measurement.leftAnkle, measurement.leftFootIndex, segmentColor, 5);
+            Imgproc.line(mat, measurement.leftHip, measurement.leftKnee, skeletonColor, 4);
+            Imgproc.line(mat, measurement.leftKnee, measurement.leftAnkle, skeletonColor, 4);
+            Imgproc.line(mat, measurement.leftAnkle, measurement.leftHeel, skeletonColor, 4);
+            Imgproc.line(mat, measurement.leftAnkle, measurement.leftFootIndex, skeletonColor, 4);
 
-            Imgproc.line(mat, measurement.rightHip, measurement.rightKnee, segmentColor, 5);
-            Imgproc.line(mat, measurement.rightKnee, measurement.rightAnkle, segmentColor, 5);
-            Imgproc.line(mat, measurement.rightAnkle, measurement.rightHeel, segmentColor, 5);
-            Imgproc.line(mat, measurement.rightAnkle, measurement.rightFootIndex, segmentColor, 5);
+            Imgproc.line(mat, measurement.rightHip, measurement.rightKnee, skeletonColor, 4);
+            Imgproc.line(mat, measurement.rightKnee, measurement.rightAnkle, skeletonColor, 4);
+            Imgproc.line(mat, measurement.rightAnkle, measurement.rightHeel, skeletonColor, 4);
+            Imgproc.line(mat, measurement.rightAnkle, measurement.rightFootIndex, skeletonColor, 4);
 
-            Imgproc.circle(mat, measurement.headTop, 10, segmentColor, -1);
-            Imgproc.circle(mat, measurement.shoulderMid, 9, segmentColor, -1);
-            Imgproc.circle(mat, measurement.hipMid, 9, segmentColor, -1);
+            /*
+             * Garis merah adalah tinggi utama:
+             * headTop ke footBottom.
+             */
+            Imgproc.line(mat, measurement.headTop, measurement.footBottom, heightColor, 7);
+            Imgproc.circle(mat, measurement.headTop, 10, heightColor, -1);
+            Imgproc.circle(mat, measurement.footBottom, 10, heightColor, -1);
+            Imgproc.circle(mat, measurement.shoulderMid, 8, skeletonColor, -1);
+            Imgproc.circle(mat, measurement.hipMid, 8, skeletonColor, -1);
 
         } catch (Exception e) {
             Log.e(TAG, "drawMeasurementSegments error", e);
         }
     }
 
-    private void drawPoseConnections(
-            Mat mat,
-            List<NormalizedLandmark> landmarks,
-            int w,
-            int h
-    ) {
+    private void drawPoseConnections(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
         int[][] connections = new int[][]{
                 {0, 1}, {1, 2}, {2, 3}, {3, 7},
                 {0, 4}, {4, 5}, {5, 6}, {6, 8},
@@ -868,34 +946,21 @@ public class MeasurementActivity extends AppCompatActivity {
                 continue;
             }
 
-            Imgproc.line(
-                    mat,
-                    p1,
-                    p2,
-                    new Scalar(0, 255, 255, 255),
-                    3
-            );
+            Imgproc.line(mat, p1, p2, new Scalar(0, 255, 255, 255), 3);
         }
     }
 
     private Point landmarkToPoint(NormalizedLandmark landmark, int w, int h) {
-        return new Point(
-                landmark.x() * w,
-                landmark.y() * h
-        );
+        return new Point(landmark.x() * w, landmark.y() * h);
     }
 
     private Point midpoint(Point a, Point b) {
-        return new Point(
-                (a.x + b.x) / 2.0,
-                (a.y + b.y) / 2.0
-        );
+        return new Point((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
     }
 
     private double distance(Point a, Point b) {
         double dx = a.x - b.x;
         double dy = a.y - b.y;
-
         return Math.sqrt(dx * dx + dy * dy);
     }
 
@@ -927,7 +992,6 @@ public class MeasurementActivity extends AppCompatActivity {
         try (InputStream inputStream = getContentResolver().openInputStream(uri)) {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-
             return BitmapFactory.decodeStream(inputStream, null, options);
 
         } catch (Exception e) {
@@ -943,7 +1007,6 @@ public class MeasurementActivity extends AppCompatActivity {
             }
 
             ExifInterface exif = new ExifInterface(inputStream);
-
             int orientation = exif.getAttributeInt(
                     ExifInterface.TAG_ORIENTATION,
                     ExifInterface.ORIENTATION_NORMAL
@@ -968,15 +1031,7 @@ public class MeasurementActivity extends AppCompatActivity {
                     return bitmap;
             }
 
-            return Bitmap.createBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    bitmap.getWidth(),
-                    bitmap.getHeight(),
-                    matrix,
-                    true
-            );
+            return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
 
         } catch (Exception e) {
             Log.e(TAG, "rotateBitmapIfRequired error", e);
@@ -992,15 +1047,8 @@ public class MeasurementActivity extends AppCompatActivity {
                 picturesDir.mkdirs();
             }
 
-            String fileName = new SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.getDefault()
-            ).format(new Date());
-
-            File imageFile = new File(
-                    picturesDir,
-                    "MEASUREMENT_" + fileName + ".jpg"
-            );
+            String fileName = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+            File imageFile = new File(picturesDir, "MEASUREMENT_" + fileName + ".jpg");
 
             FileOutputStream fos = new FileOutputStream(imageFile);
             bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos);
@@ -1026,11 +1074,20 @@ public class MeasurementActivity extends AppCompatActivity {
         double heightPx = 0.0;
     }
 
-    private static class SkeletonMeasurement {
+    private static class PoseValidation {
+        boolean valid = true;
+        String message = "OK";
+    }
+
+    private static class BodyMeasurement {
         Point headTop;
         Point eyeMid;
         Point shoulderMid;
         Point hipMid;
+        Point footBottom;
+
+        Point leftShoulder;
+        Point rightShoulder;
 
         Point leftHip;
         Point leftKnee;
@@ -1049,6 +1106,8 @@ public class MeasurementActivity extends AppCompatActivity {
         double leftLegPx;
         double rightLegPx;
         double legPx;
-        double totalHeightPx;
+
+        double verticalHeightPx;
+        double totalSkeletonPx;
     }
 }
