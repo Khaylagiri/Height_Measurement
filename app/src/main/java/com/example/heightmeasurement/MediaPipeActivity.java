@@ -54,6 +54,10 @@ public class MediaPipeActivity extends AppCompatActivity {
     private Bitmap currentResultBitmap;
 
     private PoseLandmarker poseLandmarker;
+    private double cmPerPixel = -1.0;
+    private double boardTopY = -1.0;
+    private double boardBottomY = -1.0;
+    private double boardPixelHeight = -1.0;
 
     private final ActivityResultLauncher<String> pickImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
@@ -138,6 +142,10 @@ public class MediaPipeActivity extends AppCompatActivity {
             String imagePath = getIntent().getStringExtra("image_path");
             String uriString = getIntent().getStringExtra("image_uri");
             boolean autoProcess = getIntent().getBooleanExtra("auto_process", false);
+            cmPerPixel = getIntent().getDoubleExtra("cm_per_pixel", -1.0);
+            boardTopY = getIntent().getDoubleExtra("board_top_y", -1.0);
+            boardBottomY = getIntent().getDoubleExtra("board_bottom_y", -1.0);
+            boardPixelHeight = getIntent().getDoubleExtra("board_pixel_height", -1.0);
 
             boolean fromPerspective = imagePath != null && !imagePath.trim().isEmpty();
 
@@ -249,6 +257,10 @@ public class MediaPipeActivity extends AppCompatActivity {
 
         Intent intent = new Intent(MediaPipeActivity.this, MeasurementActivity.class);
         intent.putExtra("image_uri", imageUriString);
+        intent.putExtra("cm_per_pixel", cmPerPixel);
+        intent.putExtra("board_top_y", boardTopY);
+        intent.putExtra("board_bottom_y", boardBottomY);
+        intent.putExtra("board_pixel_height", boardPixelHeight);
         startActivity(intent);
     }
 

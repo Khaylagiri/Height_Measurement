@@ -58,6 +58,9 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     private static final double TOP_MARGIN_CELLS = 0.35;
     private static final double BOTTOM_EXTRA_CELLS = 5.60;
 
+    private static final double BOARD_REAL_HEIGHT_CM = 200.0;
+    private static final double BOARD_HEIGHT_CELLS = 19.35; // 8.0 (top) + 3.35 (gap) + 8.0 (bottom)
+
     private static final double MARKER_SIZE_CELLS = 0.74;
 
     private static final int RESULT_SHIFT_X_PX = -100;
@@ -214,6 +217,17 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
         Intent intent = new Intent(PerspectiveCorrectionActivity.this, MediaPipeActivity.class);
         intent.putExtra("image_path", imagePath);
+
+        // Hitung cm_per_pixel dan data board secara eksplisit berdasarkan acuan board 200 cm
+        double boardTopY = TOP_MARGIN_CELLS * PX_PER_CELL;
+        double boardBottomY = (TOP_MARGIN_CELLS + BOTTOM_BOARD_OFFSET_Y + BOTTOM_BOARD_ROWS) * PX_PER_CELL;
+        double boardPixelHeight = boardBottomY - boardTopY;
+        double cmPerPixel = BOARD_REAL_HEIGHT_CM / boardPixelHeight;
+
+        intent.putExtra("board_top_y", boardTopY);
+        intent.putExtra("board_bottom_y", boardBottomY);
+        intent.putExtra("board_pixel_height", boardPixelHeight);
+        intent.putExtra("cm_per_pixel", cmPerPixel);
 
         /*
          * false artinya:

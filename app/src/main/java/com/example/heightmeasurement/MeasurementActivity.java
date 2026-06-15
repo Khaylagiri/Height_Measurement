@@ -56,28 +56,36 @@ public class MeasurementActivity extends AppCompatActivity {
      * cmPerPixel = BOARD_REAL_HEIGHT_CM / tinggiBoardDalamPixel
      */
     private static final double BOARD_REAL_HEIGHT_CM = 200.0;
-
-    /*
-     * Kalau hasil PerspectiveCorrectionActivity benar-benar hanya berisi area board 200 cm,
-     * biarkan TOP dan BOTTOM margin = 0.
-     *
-     * Kalau output perspective kamu ternyata ada tambahan area putih/extra di atas atau bawah,
-     * isi margin pixel-nya di sini.
-     *
-     * Contoh:
-     * kalau ada 80 px tambahan atas dan 120 px tambahan bawah:
-     * BOARD_TOP_MARGIN_PX = 80
-     * BOARD_BOTTOM_MARGIN_PX = 120
-     */
     private static final int BOARD_TOP_MARGIN_PX = 0;
     private static final int BOARD_BOTTOM_MARGIN_PX = 0;
 
     /*
-     * Kalibrasi akhir.
+     * KOREKSI KEDALAMAN (DEPTH/PARALLAX CORRECTION)
      *
-     * Biarkan 1.0 dulu.
-     * Kalau hasil aplikasi 158 cm padahal asli 160 cm:
-     * HEIGHT_CALIBRATION_FACTOR = 160.0 / 158.0
+     * Perspective correction hanya meluruskan bidang board (2D).
+     * Jika subjek berdiri di DEPAN board (lebih dekat ke kamera),
+     * subjek akan tampak lebih besar dari skala board → tinggi terbaca lebih tinggi.
+     *
+     * Rumus fisika:
+     * tinggi_sebenarnya = tinggi_terukur × (jarak_kamera - jarak_subjek) / jarak_kamera
+     *
+     * Contoh kasus kamu:
+     * - Kamera 350 cm dari board, subjek 50 cm di depan board
+     * - Faktor = (350 - 50) / 350 = 0.857
+     * - Tinggi terukur 186.1 cm × 0.857 = 159.5 cm ← mendekati 160 cm!
+     *
+     * CARA KALIBRASI:
+     * 1. Ukur jarak kamera ke board (dalam cm) → isi CAMERA_DISTANCE_CM
+     * 2. Ukur jarak subjek ke board (dalam cm) → isi SUBJECT_DISTANCE_FROM_BOARD_CM
+     * 3. Atau hitung langsung: DEPTH_CORRECTION_FACTOR = tinggi_asli / tinggi_aplikasi
+     *    Contoh: 160.0 / 186.1 = 0.86
+     */
+    private static final double CAMERA_DISTANCE_CM = 350.0;
+    private static final double SUBJECT_DISTANCE_FROM_BOARD_CM = 50.0;
+
+    /*
+     * Kalibrasi akhir tambahan (setelah depth correction).
+     * Biarkan 1.0 dulu. Hanya untuk koreksi kecil residual.
      */
     private static final double HEIGHT_CALIBRATION_FACTOR = 1.0;
 
@@ -90,6 +98,10 @@ public class MeasurementActivity extends AppCompatActivity {
     private Bitmap currentBitmap;
 
     private PoseLandmarker poseLandmarker;
+    private double cmPerPixel = -1.0;
+    private double boardTopY = -1.0;
+    private double boardBottomY = -1.0;
+    private double boardPixelHeight = -1.0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -114,6 +126,19 @@ public class MeasurementActivity extends AppCompatActivity {
         }
 
         initPoseLandmarker();
+
+        cmPerPixel = getIntent().getDoubleExtra("cm_per_pixel", -1.0);
+        boardTopY = getIntent().getDoubleExtra("board_top_y", -1.0);
+        boardBottomY = getIntent().getDoubleExtra("board_bottom_y", -1.0);
+        boardPixelHeight = getIntent().getDoubleExtra("board_pixel_height", -1.0);
+
+        if (cmPerPixel <= 0.0) {
+            // Fallback default: board 200 cm, 19.35 cells, 120 px/cell
+            boardTopY = 0.35 * 120.0;
+            boardBottomY = (0.35 + 11.35 + 8.0) * 120.0;
+            boardPixelHeight = boardBottomY - boardTopY;
+            cmPerPixel = 200.0 / boardPixelHeight;
+        }
 
         String uriString = getIntent().getStringExtra("image_uri");
 
@@ -231,17 +256,26 @@ public class MeasurementActivity extends AppCompatActivity {
             );
 
             PoseValidation validation = validatePose(
+                    landmarks,
                     measurement,
                     workingBitmap.getWidth(),
                     workingBitmap.getHeight()
             );
 
+            if (!validation.valid) {
+                currentBitmap = drawError(workingBitmap, "POSE TIDAK VALID");
+                imageViewMeasurement.setImageBitmap(currentBitmap);
+                tvMeasurementResult.setText(validation.message);
+                Toast.makeText(this, "Pose tidak valid untuk pengukuran", Toast.LENGTH_LONG).show();
+                return;
+            }
+
             int imageHeightPx = workingBitmap.getHeight();
 
-            double verticalCm = pixelToCm(measurement.verticalHeightPx, imageHeightPx);
-            double skeletonCm = pixelToCm(measurement.totalSkeletonPx, imageHeightPx);
+            double verticalCm = pixelToCm(measurement.verticalHeightPx);
+            double skeletonCm = pixelToCm(measurement.totalSkeletonPx);
             double contourCm = contourResult.valid
-                    ? pixelToCm(contourResult.heightPx, imageHeightPx)
+                    ? pixelToCm(contourResult.heightPx)
                     : 0.0;
 
             currentBitmap = drawFinalMeasurement(
@@ -258,25 +292,51 @@ public class MeasurementActivity extends AppCompatActivity {
 
             imageViewMeasurement.setImageBitmap(currentBitmap);
 
-            String statusText = validation.valid
-                    ? "Pose valid"
-                    : "Pose kurang ideal: " + validation.message;
-
-            tvMeasurementResult.setText(
-                    "Tinggi badan: " + format1(verticalCm) + " cm\n" +
-                            "Metode utama: vertikal head-to-foot landmark\n" +
-                            "hPix vertical: " + format1(measurement.verticalHeightPx) + " px\n" +
-                            "Skeleton validasi: " + format1(skeletonCm) + " cm\n" +
-                            "Skala: tinggi board = " + format1(BOARD_REAL_HEIGHT_CM) + " cm\n" +
-                            "Board pixel height: " + getBoardPixelHeight(imageHeightPx) + " px\n" +
-                            statusText
+            double depthFactor = (CAMERA_DISTANCE_CM - SUBJECT_DISTANCE_FROM_BOARD_CM) / CAMERA_DISTANCE_CM;
+            String debugText = String.format(Locale.US,
+                    "Tinggi badan: %.1f cm\n" +
+                            "Status: %s\n\n" +
+                            "--- Detail Debug ---\n" +
+                            "verticalHeightPx: %.1f px\n" +
+                            "headTop.y: %.1f px\n" +
+                            "footBottom.y: %.1f px\n" +
+                            "boardTopY: %.1f px\n" +
+                            "boardBottomY: %.1f px\n" +
+                            "boardPixelHeight: %.1f px\n" +
+                            "cmPerPixel: %.6f cm/px\n" +
+                            "Depth Factor: %.3f\n" +
+                            "Camera/Subj: %.0f/%.0f cm\n" +
+                            "heightCm: %.1f cm",
+                    verticalCm,
+                    validation.valid ? "Pose Valid" : "Pose Tidak Valid",
+                    measurement.verticalHeightPx,
+                    measurement.headTop.y,
+                    measurement.footBottom.y,
+                    boardTopY,
+                    boardBottomY,
+                    boardPixelHeight,
+                    cmPerPixel,
+                    depthFactor,
+                    CAMERA_DISTANCE_CM,
+                    SUBJECT_DISTANCE_FROM_BOARD_CM,
+                    verticalCm
             );
 
-            if (validation.valid) {
-                Toast.makeText(this, "Tinggi badan berhasil dihitung", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "Hasil keluar, tapi pose kurang ideal", Toast.LENGTH_LONG).show();
-            }
+            tvMeasurementResult.setText(debugText);
+
+            Log.i(TAG, "MEASUREMENT_DEBUG: " +
+                    "verticalHeightPx=" + measurement.verticalHeightPx +
+                    ", headTop.y=" + measurement.headTop.y +
+                    ", footBottom.y=" + measurement.footBottom.y +
+                    ", boardTopY=" + boardTopY +
+                    ", boardBottomY=" + boardBottomY +
+                    ", boardPixelHeight=" + boardPixelHeight +
+                    ", cmPerPixel=" + cmPerPixel +
+                    ", heightCm=" + verticalCm +
+                    ", poseValidationStatus=" + (validation.valid ? "Valid" : "Invalid")
+            );
+
+            Toast.makeText(this, "Tinggi badan berhasil dihitung", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
             Log.e(TAG, "runMeasurementPipeline error", e);
@@ -301,14 +361,20 @@ public class MeasurementActivity extends AppCompatActivity {
         return Math.max(1, boardPixelHeight);
     }
 
-    private double pixelToCm(double heightPx, int imageHeightPx) {
+    private double pixelToCm(double heightPx) {
         /*
-         * Karena board vertikal asli = 200 cm,
-         * maka skala cm/pixel dihitung dari tinggi board pada gambar hasil perspective.
+         * Menggunakan cm_per_pixel yang dikirim via Intent dari Perspective Correction.
+         * Jika tidak ada, gunakan hitungan fallback default dari grid 19.35 sel.
          */
-        double boardPixelHeight = getBoardPixelHeight(imageHeightPx);
-        double cmPerPixel = BOARD_REAL_HEIGHT_CM / boardPixelHeight;
-        return heightPx * cmPerPixel * HEIGHT_CALIBRATION_FACTOR;
+        double currentScale = this.cmPerPixel;
+        if (currentScale <= 0.0) {
+            currentScale = 200.0 / 2322.0;
+        }
+
+        // Koreksi kedalaman: subjek berada di depan papan
+        double depthCorrectionFactor = (CAMERA_DISTANCE_CM - SUBJECT_DISTANCE_FROM_BOARD_CM) / CAMERA_DISTANCE_CM;
+
+        return heightPx * currentScale * depthCorrectionFactor * HEIGHT_CALIBRATION_FACTOR;
     }
 
     private BodyMeasurement estimateBodyMeasurement(
@@ -357,6 +423,7 @@ public class MeasurementActivity extends AppCompatActivity {
         /*
          * Estimasi puncak kepala anatomi.
          * Tidak mengambil batas rambut/hijab/topi/aksesoris.
+         * Diambil murni dari landmark wajah dan bahu untuk menghindari bias.
          */
         Point headTop = estimateAnatomicalHeadTop(
                 nose,
@@ -364,20 +431,6 @@ public class MeasurementActivity extends AppCompatActivity {
                 earMid,
                 shoulderMid
         );
-
-        /*
-         * Contour hanya boleh mengoreksi sedikit jika sangat dekat dengan headTop.
-         * Kalau contour terlalu tinggi, dianggap rambut/hijab/aksesoris dan diabaikan.
-         */
-        if (contourResult != null && contourResult.valid && contourResult.bodyRect != null) {
-            double contourTop = contourResult.bodyRect.y;
-            double anatomicalTop = headTop.y;
-            double maxAllowedCorrectionPx = distance(eyeMid, shoulderMid) * 0.06;
-
-            if (contourTop < anatomicalTop && anatomicalTop - contourTop <= maxAllowedCorrectionPx) {
-                headTop = new Point(headTop.x, contourTop);
-            }
-        }
 
         Point footBottom = getFootBottomPoint(
                 leftAnkle,
@@ -517,43 +570,137 @@ public class MeasurementActivity extends AppCompatActivity {
         }
     }
 
-    private PoseValidation validatePose(BodyMeasurement measurement, int imageWidth, int imageHeight) {
+    private double calculateAngle(Point p1, Point center, Point p2) {
+        double v1x = p1.x - center.x;
+        double v1y = p1.y - center.y;
+        double v2x = p2.x - center.x;
+        double v2y = p2.y - center.y;
+
+        double dotProduct = v1x * v2x + v1y * v2y;
+        double magnitude1 = Math.sqrt(v1x * v1x + v1y * v1y);
+        double magnitude2 = Math.sqrt(v2x * v2x + v2y * v2y);
+
+        if (magnitude1 * magnitude2 == 0) return 0.0;
+
+        double cosAngle = dotProduct / (magnitude1 * magnitude2);
+        cosAngle = Math.max(-1.0, Math.min(1.0, cosAngle));
+
+        return Math.toDegrees(Math.acos(cosAngle));
+    }
+
+    private PoseValidation validatePose(
+            List<NormalizedLandmark> landmarks,
+            BodyMeasurement measurement,
+            int imageWidth,
+            int imageHeight
+    ) {
         PoseValidation validation = new PoseValidation();
         validation.valid = true;
         validation.message = "OK";
 
+        List<String> warnings = new ArrayList<>();
+
+        // --- HARD FAIL: landmark pokok null ---
+        if (measurement.headTop == null || measurement.footBottom == null ||
+                measurement.leftShoulder == null || measurement.rightShoulder == null ||
+                measurement.leftHip == null || measurement.rightHip == null ||
+                measurement.leftKnee == null || measurement.rightKnee == null ||
+                measurement.leftAnkle == null || measurement.rightAnkle == null ||
+                measurement.leftHeel == null || measurement.rightHeel == null ||
+                measurement.leftFootIndex == null || measurement.rightFootIndex == null) {
+            validation.valid = false;
+            validation.message = "Landmark tubuh tidak lengkap. Pastikan seluruh tubuh terlihat.";
+            Log.w(TAG, "validatePose HARD FAIL: satu atau lebih landmark null");
+            return validation;
+        }
+
+        // 1. Cek visibilitas landmark utama (threshold SANGAT rendah: >= 0.1)
+        //    Landmark dari perspective-corrected image biasanya punya visibility rendah.
+        int[] keyLandmarks = {0, 11, 12, 23, 24, 27, 28};  // hanya landmark paling penting
+        int lowVisCount = 0;
+        for (int idx : keyLandmarks) {
+            if (idx >= landmarks.size()) continue;
+            NormalizedLandmark lm = landmarks.get(idx);
+            float visibility = lm.visibility().isPresent() ? lm.visibility().get() : 0.0f;
+            Log.d(TAG, "validatePose: landmark[" + idx + "] visibility=" + visibility);
+            if (visibility < 0.1f) {
+                lowVisCount++;
+            }
+        }
+        if (lowVisCount > 3) {
+            // Lebih dari setengah landmark utama tidak terlihat sama sekali
+            warnings.add("Visibilitas rendah pada " + lowVisCount + "/" + keyLandmarks.length + " landmark utama");
+            Log.w(TAG, "validatePose WARNING: " + lowVisCount + " landmark utama visibility < 0.1");
+        }
+
+        // 2. Cek apakah headTop dan footBottom masuk frame (padding sangat kecil: 2px)
         if (!isInside(measurement.headTop, imageWidth, imageHeight) ||
                 !isInside(measurement.footBottom, imageWidth, imageHeight)) {
-            validation.valid = false;
-            validation.message = "kepala atau kaki keluar frame";
-            return validation;
+            warnings.add("Kepala atau kaki di luar batas gambar");
+            Log.w(TAG, "validatePose WARNING: head/foot outside image bounds");
         }
 
+        // 3. Cek kemiringan bahu (maks 35% — cukup toleran untuk pose alami)
         double shoulderTilt = Math.abs(measurement.leftShoulder.y - measurement.rightShoulder.y);
         double shoulderWidth = Math.max(1.0, distance(measurement.leftShoulder, measurement.rightShoulder));
+        double shoulderTiltRatio = shoulderTilt / shoulderWidth;
+        Log.d(TAG, "validatePose: shoulderTilt=" + String.format(Locale.US, "%.3f", shoulderTiltRatio));
+        if (shoulderTiltRatio > 0.35) {
+            warnings.add("Bahu terlalu miring (" + String.format(Locale.US, "%.0f%%", shoulderTiltRatio * 100) + ")");
+        }
 
+        // 4. Cek kemiringan pinggul (maks 35%)
         double hipTilt = Math.abs(measurement.leftHip.y - measurement.rightHip.y);
         double hipWidth = Math.max(1.0, distance(measurement.leftHip, measurement.rightHip));
-
-        double verticalVsSkeletonDiff = Math.abs(measurement.verticalHeightPx - measurement.totalSkeletonPx) /
-                Math.max(1.0, measurement.verticalHeightPx);
-
-        if (shoulderTilt / shoulderWidth > 0.35) {
-            validation.valid = false;
-            validation.message = "bahu terlalu miring";
-            return validation;
+        double hipTiltRatio = hipTilt / hipWidth;
+        Log.d(TAG, "validatePose: hipTilt=" + String.format(Locale.US, "%.3f", hipTiltRatio));
+        if (hipTiltRatio > 0.35) {
+            warnings.add("Pinggul terlalu miring (" + String.format(Locale.US, "%.0f%%", hipTiltRatio * 100) + ")");
         }
 
-        if (hipTilt / hipWidth > 0.35) {
-            validation.valid = false;
-            validation.message = "pinggul terlalu miring";
-            return validation;
+        // 5. Cek kaki tidak terlalu menekuk (knee angle >= 130 derajat)
+        double leftKneeAngle = calculateAngle(measurement.leftHip, measurement.leftKnee, measurement.leftAnkle);
+        double rightKneeAngle = calculateAngle(measurement.rightHip, measurement.rightKnee, measurement.rightAnkle);
+        Log.d(TAG, "validatePose: leftKneeAngle=" + String.format(Locale.US, "%.1f", leftKneeAngle)
+                + " rightKneeAngle=" + String.format(Locale.US, "%.1f", rightKneeAngle));
+        if (leftKneeAngle < 130.0 || rightKneeAngle < 130.0) {
+            warnings.add("Lutut terlalu menekuk (L=" + String.format(Locale.US, "%.0f°", leftKneeAngle)
+                    + " R=" + String.format(Locale.US, "%.0f°", rightKneeAngle) + ")");
         }
 
-        if (verticalVsSkeletonDiff > 0.35) {
+        // 6. Cek kemiringan torso (maks 30%)
+        double torsoHeight = Math.abs(measurement.hipMid.y - measurement.shoulderMid.y);
+        double torsoWidthOffset = Math.abs(measurement.hipMid.x - measurement.shoulderMid.x);
+        double torsoTiltRatio = torsoHeight > 0 ? (torsoWidthOffset / torsoHeight) : 0;
+        Log.d(TAG, "validatePose: torsoTilt=" + String.format(Locale.US, "%.3f", torsoTiltRatio));
+        if (torsoHeight > 0 && torsoTiltRatio > 0.30) {
+            warnings.add("Badan terlalu miring (" + String.format(Locale.US, "%.0f%%", torsoTiltRatio * 100) + ")");
+        }
+
+        // 7. Cek posisi horizontal (5% - 95% dari lebar gambar — hampir selalu lolos)
+        double minXLimit = imageWidth * 0.05;
+        double maxXLimit = imageWidth * 0.95;
+        if (measurement.headTop.x < minXLimit || measurement.headTop.x > maxXLimit ||
+                measurement.footBottom.x < minXLimit || measurement.footBottom.x > maxXLimit) {
+            warnings.add("Subjek terlalu di tepi gambar");
+            Log.w(TAG, "validatePose WARNING: subject too close to horizontal edge");
+        }
+
+        // --- Tentukan hasil ---
+        // Pose tetap VALID meskipun ada warning.
+        // Hanya gagal total kalau ada >= 4 warning sekaligus (pose benar-benar buruk).
+        if (warnings.size() >= 4) {
             validation.valid = false;
-            validation.message = "pose kurang tegak atau landmark kaki/kepala kurang stabil";
-            return validation;
+            validation.message = "Pose kurang ideal:\n• " + String.join("\n• ", warnings);
+            Log.w(TAG, "validatePose FAIL: " + warnings.size() + " warnings — " + String.join("; ", warnings));
+        } else if (!warnings.isEmpty()) {
+            validation.valid = true;  // TETAP VALID, tapi beri peringatan
+            validation.message = "Pose valid dengan catatan:\n• " + String.join("\n• ", warnings);
+            Log.i(TAG, "validatePose PASS with warnings: " + String.join("; ", warnings));
+        } else {
+            validation.valid = true;
+            validation.message = "Pose valid — posisi ideal";
+            Log.i(TAG, "validatePose PASS — all checks OK");
         }
 
         return validation;
@@ -783,10 +930,9 @@ public class MeasurementActivity extends AppCompatActivity {
             }
 
             String subtitle = "Vertical: " + format1(measurement.verticalHeightPx) +
-                    " px | Board: " + getBoardPixelHeight(imageHeightPx) +
-                    " px = " + format1(BOARD_REAL_HEIGHT_CM) + " cm";
+                    " px | cm/px: " + String.format(Locale.US, "%.5f", this.cmPerPixel);
 
-            String status = validation.valid ? "Pose valid" : "Pose kurang ideal: " + validation.message;
+            String status = validation.valid ? "Pose Valid" : "Pose Tidak Valid";
 
             drawResultHeader(
                     mat,
