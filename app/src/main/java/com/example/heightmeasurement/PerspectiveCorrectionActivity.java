@@ -19,12 +19,9 @@ import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
 import org.opencv.calib3d.Calib3d;
 import org.opencv.core.Core;
-import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
-import org.opencv.core.Rect;
-import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.objdetect.ArucoDetector;
@@ -63,9 +60,17 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private static final double MARKER_SIZE_CELLS = 0.74;
 
-    private static final int RESULT_SHIFT_X_PX = -100;
+    /*
+     * Ukur dari pusat optik kamera ke bidang papan dan dari subjek ke papan.
+     * Nilai ini harus sama dengan kondisi fisik saat foto diambil.
+     * Pada konfigurasi saat ini subjek diasumsikan 35 cm di depan papan.
+     * Ukur langsung dan ubah angka ini bila posisi tumit berbeda.
+     */
+    private static final double CAMERA_DISTANCE_CM = 350.0;
+    private static final double SUBJECT_DISTANCE_FROM_BOARD_CM = 35.0;
 
-    private static final int CROP_WHITE_THRESHOLD = 245;
+    private static final double MAX_MEAN_REPROJECTION_ERROR_PX = 6.0;
+    private static final double MAX_POINT_REPROJECTION_ERROR_PX = 15.0;
 
     private static final int OUTPUT_WIDTH_PX =
             (int) Math.round((BOARD_COLS + LEFT_RIGHT_MARGIN_CELLS * 2.0) * PX_PER_CELL);
@@ -86,6 +91,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     private Bitmap currentBitmap;
 
     private boolean perspectiveSuccess = false;
+    private String lastPerspectiveError = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -154,13 +160,18 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             btnPerspective.setEnabled(false);
             btnSaveGalleryImage.setVisibility(View.GONE);
             perspectiveSuccess = false;
+            lastPerspectiveError = "";
 
             Bitmap result = autoPerspectiveCamScannerStyle(originalBitmap);
 
             if (result == null) {
+                String errorMessage = lastPerspectiveError == null || lastPerspectiveError.trim().isEmpty()
+                        ? "Perspective gagal. Marker acuan papan belum cukup untuk menghitung bidang."
+                        : "Perspective gagal: " + lastPerspectiveError;
+
                 Toast.makeText(
                         this,
-                        "Perspective gagal. Pastikan marker ArUco terlihat jelas dan tidak terlalu tertutup badan.",
+                        errorMessage,
                         Toast.LENGTH_LONG
                 ).show();
 
@@ -208,6 +219,17 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             return;
         }
 
+        if (currentBitmap.getWidth() != OUTPUT_WIDTH_PX
+                || currentBitmap.getHeight() != OUTPUT_HEIGHT_PX) {
+            Toast.makeText(
+                    this,
+                    "Ukuran hasil perspective tidak valid: "
+                            + currentBitmap.getWidth() + "x" + currentBitmap.getHeight(),
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+
         String imagePath = saveBitmapToCacheForMediaPipe(currentBitmap);
 
         if (imagePath == null) {
@@ -218,16 +240,21 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         Intent intent = new Intent(PerspectiveCorrectionActivity.this, MediaPipeActivity.class);
         intent.putExtra("image_path", imagePath);
 
-        // Hitung cm_per_pixel dan data board secara eksplisit berdasarkan acuan board 200 cm
+        // Semua nilai skala berasal dari bitmap warped yang sama.
         double boardTopY = TOP_MARGIN_CELLS * PX_PER_CELL;
-        double boardBottomY = (TOP_MARGIN_CELLS + BOTTOM_BOARD_OFFSET_Y + BOTTOM_BOARD_ROWS) * PX_PER_CELL;
-        double boardPixelHeight = boardBottomY - boardTopY;
+        double boardPixelHeight = BOARD_HEIGHT_CELLS * PX_PER_CELL;
+        double boardBottomY = boardTopY + boardPixelHeight;
         double cmPerPixel = BOARD_REAL_HEIGHT_CM / boardPixelHeight;
 
         intent.putExtra("board_top_y", boardTopY);
         intent.putExtra("board_bottom_y", boardBottomY);
         intent.putExtra("board_pixel_height", boardPixelHeight);
         intent.putExtra("cm_per_pixel", cmPerPixel);
+        intent.putExtra("board_real_height_cm", BOARD_REAL_HEIGHT_CM);
+        intent.putExtra("output_width_px", OUTPUT_WIDTH_PX);
+        intent.putExtra("output_height_px", OUTPUT_HEIGHT_PX);
+        intent.putExtra("camera_distance_cm", CAMERA_DISTANCE_CM);
+        intent.putExtra("subject_distance_from_board_cm", SUBJECT_DISTANCE_FROM_BOARD_CM);
 
         /*
          * false artinya:
@@ -284,8 +311,6 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
         Mat srcMat = new Mat();
         Mat gray = new Mat();
         Mat warped = new Mat();
-        Mat shiftedWarped = null;
-        Mat croppedWarped = null;
 
         Mat ids = new Mat();
         List<Mat> corners = new ArrayList<>();
@@ -306,6 +331,10 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                 gray = srcMat.clone();
             }
 
+            /*
+             * CLAHE/equalize tidak selalu diperlukan. equalizeHist tetap dipakai
+             * karena gambar masukan berupa citra 8-bit grayscale.
+             */
             Imgproc.equalizeHist(gray, gray);
 
             Dictionary dictionary = Objdetect.getPredefinedDictionary(MARKER_DICT);
@@ -315,54 +344,147 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             detector.detectMarkers(gray, corners, ids, rejected);
 
             if (ids.empty() || corners.isEmpty()) {
-                return null;
+                return failPerspective("tidak ada marker ArUco yang berhasil dibaca");
             }
 
-            List<Point> imagePoints = new ArrayList<>();
-            List<Point> boardPoints = new ArrayList<>();
+            /*
+             * PENTING:
+             * Homography dihitung dari TITIK TENGAH marker, bukan keempat sudutnya.
+             * Ini menghindari kegagalan akibat ukuran cetak marker, white border,
+             * atau urutan sudut marker yang berbeda.
+             */
+            List<Point> imageCenters = new ArrayList<>();
+            List<Point> boardCenters = new ArrayList<>();
 
             int usedMarkers = 0;
+            int usedTopMarkers = 0;
+            int usedBottomMarkers = 0;
+
+            double minWorldX = Double.MAX_VALUE;
+            double maxWorldX = -Double.MAX_VALUE;
+            double minWorldY = Double.MAX_VALUE;
+            double maxWorldY = -Double.MAX_VALUE;
 
             for (int i = 0; i < ids.rows(); i++) {
                 int id = (int) ids.get(i, 0)[0];
 
-                Point[] worldCorners = getMarkerWorldCorners(id);
-                if (worldCorners == null) {
+                Point boardCenter = getMarkerWorldCenter(id);
+                if (boardCenter == null) {
+                    // Marker terdeteksi, tetapi ID-nya tidak terdaftar pada layout papan.
                     continue;
                 }
 
-                Point[] imageCorners = getMarkerImageCornersOrdered(corners.get(i));
-                if (imageCorners == null) {
+                Point imageCenter = getMarkerImageCenter(corners.get(i));
+                if (imageCenter == null) {
                     continue;
                 }
 
-                for (int k = 0; k < 4; k++) {
-                    imagePoints.add(imageCorners[k]);
-                    boardPoints.add(worldCorners[k]);
-                }
-
+                imageCenters.add(imageCenter);
+                boardCenters.add(boardCenter);
                 usedMarkers++;
+
+                if (getTopBoardRowCol(id) != null) {
+                    usedTopMarkers++;
+                } else if (getBottomBoardRowCol(id) != null) {
+                    usedBottomMarkers++;
+                }
+
+                minWorldX = Math.min(minWorldX, boardCenter.x);
+                maxWorldX = Math.max(maxWorldX, boardCenter.x);
+                minWorldY = Math.min(minWorldY, boardCenter.y);
+                maxWorldY = Math.max(maxWorldY, boardCenter.y);
             }
 
-            Log.d(TAG, "Detected markers: " + corners.size() + ", used markers: " + usedMarkers);
+            Log.d(
+                    TAG,
+                    "Detected=" + ids.rows()
+                            + ", registered=" + usedMarkers
+                            + ", top=" + usedTopMarkers
+                            + ", bottom=" + usedBottomMarkers
+            );
 
-            if (usedMarkers < 4 || imagePoints.size() < 16) {
-                return null;
+            if (usedMarkers < 4) {
+                return failPerspective(
+                        "hanya " + usedMarkers
+                                + " marker yang cocok dengan daftar ID papan; minimal 4 diperlukan"
+                );
             }
 
-            imagePointsMat = new MatOfPoint2f(imagePoints.toArray(new Point[0]));
-            boardPointsMat = new MatOfPoint2f(boardPoints.toArray(new Point[0]));
+            /*
+             * Badan boleh menutup sebagian marker.
+             * Cukup ada marker terdaftar pada papan atas dan papan bawah.
+             */
+            if (usedTopMarkers < 1 || usedBottomMarkers < 1) {
+                return failPerspective(
+                        "marker yang terbaca harus mencakup papan atas dan papan bawah"
+                );
+            }
+
+            double horizontalCoverage = maxWorldX - minWorldX;
+            double verticalCoverage = maxWorldY - minWorldY;
+            double boardWidthPx = BOARD_COLS * PX_PER_CELL;
+            double boardHeightPx = BOARD_HEIGHT_CELLS * PX_PER_CELL;
+
+            Log.d(
+                    TAG,
+                    String.format(
+                            Locale.US,
+                            "Coverage horizontal=%.1f px, vertical=%.1f px",
+                            horizontalCoverage,
+                            verticalCoverage
+                    )
+            );
+
+            /*
+             * Threshold dibuat moderat. Marker tidak harus berada tepat di empat sudut,
+             * tetapi tidak boleh semuanya berkumpul pada area sempit.
+             */
+            if (horizontalCoverage < boardWidthPx * 0.25) {
+                return failPerspective("sebaran marker kiri-kanan terlalu sempit");
+            }
+
+            if (verticalCoverage < boardHeightPx * 0.35) {
+                return failPerspective("sebaran marker atas-bawah terlalu sempit");
+            }
+
+            imagePointsMat = new MatOfPoint2f(
+                    imageCenters.toArray(new Point[0])
+            );
+            boardPointsMat = new MatOfPoint2f(
+                    boardCenters.toArray(new Point[0])
+            );
 
             homography = Calib3d.findHomography(
                     imagePointsMat,
                     boardPointsMat,
                     Calib3d.RANSAC,
-                    5.0
+                    10.0
             );
 
             if (homography.empty()) {
-                return null;
+                return failPerspective("matriks homography tidak dapat dihitung");
             }
+
+            /*
+             * Reprojection error hanya dicatat sebagai diagnostik.
+             * Jangan langsung menggagalkan perspective karena papan terdiri dari
+             * dua lembar dan pemasangan fisiknya bisa memiliki sedikit deviasi.
+             */
+            ReprojectionError reprojectionError = calculateReprojectionError(
+                    imagePointsMat,
+                    boardPointsMat,
+                    homography
+            );
+
+            Log.d(
+                    TAG,
+                    String.format(
+                            Locale.US,
+                            "Center reprojection error mean=%.2f px, max=%.2f px",
+                            reprojectionError.meanPx,
+                            reprojectionError.maxPx
+                    )
+            );
 
             Imgproc.warpPerspective(
                     srcMat,
@@ -372,21 +494,29 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                     Imgproc.INTER_LINEAR
             );
 
-            shiftedWarped = shiftResultX(warped, RESULT_SHIFT_X_PX);
-            croppedWarped = cropHorizontalBlankBorders(shiftedWarped);
+            if (warped.empty()
+                    || warped.cols() != OUTPUT_WIDTH_PX
+                    || warped.rows() != OUTPUT_HEIGHT_PX) {
+                return failPerspective("ukuran hasil warp tidak sesuai");
+            }
 
+            // Jangan shift, crop, atau resize lagi.
             Bitmap result = Bitmap.createBitmap(
-                    croppedWarped.cols(),
-                    croppedWarped.rows(),
+                    OUTPUT_WIDTH_PX,
+                    OUTPUT_HEIGHT_PX,
                     Bitmap.Config.ARGB_8888
             );
 
-            Utils.matToBitmap(croppedWarped, result);
+            Utils.matToBitmap(warped, result);
             return result;
 
         } catch (Exception e) {
             Log.e(TAG, "autoPerspectiveCamScannerStyle error", e);
-            return null;
+            return failPerspective(
+                    e.getMessage() == null
+                            ? "terjadi kesalahan saat memproses perspective"
+                            : e.getMessage()
+            );
 
         } finally {
             for (Mat c : corners) {
@@ -410,109 +540,84 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             srcMat.release();
             gray.release();
             warped.release();
-
-            if (shiftedWarped != null) {
-                shiftedWarped.release();
-            }
-
-            if (croppedWarped != null) {
-                croppedWarped.release();
-            }
         }
     }
 
-    private Mat shiftResultX(Mat input, int shiftXPx) {
-        Mat output = new Mat(input.rows(), input.cols(), input.type());
-
-        Mat translation = Mat.eye(2, 3, CvType.CV_64F);
-
-        translation.put(0, 2, shiftXPx);
-        translation.put(1, 2, 0);
-
-        Imgproc.warpAffine(
-                input,
-                output,
-                translation,
-                input.size(),
-                Imgproc.INTER_LINEAR,
-                Core.BORDER_CONSTANT,
-                new Scalar(255, 255, 255, 255)
-        );
-
-        translation.release();
-
-        return output;
+    private Bitmap failPerspective(String reason) {
+        lastPerspectiveError = reason;
+        Log.w(TAG, "Perspective rejected: " + reason);
+        return null;
     }
 
-    private Mat cropHorizontalBlankBorders(Mat input) {
-        Mat gray = new Mat();
-        Mat mask = new Mat();
+    private Point getMarkerImageCenter(Mat markerMat) {
+        try {
+            double sumX = 0.0;
+            double sumY = 0.0;
+            int validPointCount = 0;
+
+            for (int i = 0; i < 4; i++) {
+                double[] xy = markerMat.get(0, i);
+
+                if (xy == null || xy.length < 2) {
+                    xy = markerMat.get(i, 0);
+                }
+
+                if (xy == null || xy.length < 2) {
+                    continue;
+                }
+
+                sumX += xy[0];
+                sumY += xy[1];
+                validPointCount++;
+            }
+
+            if (validPointCount != 4) {
+                return null;
+            }
+
+            return new Point(
+                    sumX / validPointCount,
+                    sumY / validPointCount
+            );
+
+        } catch (Exception e) {
+            Log.e(TAG, "getMarkerImageCenter error", e);
+            return null;
+        }
+    }
+
+    private ReprojectionError calculateReprojectionError(
+            MatOfPoint2f imagePoints,
+            MatOfPoint2f expectedBoardPoints,
+            Mat homography
+    ) {
+        MatOfPoint2f projected = new MatOfPoint2f();
 
         try {
-            if (input.channels() == 4) {
-                Imgproc.cvtColor(input, gray, Imgproc.COLOR_RGBA2GRAY);
-            } else if (input.channels() == 3) {
-                Imgproc.cvtColor(input, gray, Imgproc.COLOR_BGR2GRAY);
-            } else {
-                gray = input.clone();
+            Core.perspectiveTransform(imagePoints, projected, homography);
+
+            Point[] actual = projected.toArray();
+            Point[] expected = expectedBoardPoints.toArray();
+
+            if (actual.length == 0 || actual.length != expected.length) {
+                return new ReprojectionError(false, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY);
             }
 
-            Imgproc.threshold(
-                    gray,
-                    mask,
-                    CROP_WHITE_THRESHOLD,
-                    255,
-                    Imgproc.THRESH_BINARY_INV
-            );
+            double total = 0.0;
+            double max = 0.0;
 
-            int left = -1;
-            int right = -1;
-
-            int minPixelsPerColumn = Math.max(5, input.rows() / 400);
-
-            for (int x = 0; x < mask.cols(); x++) {
-                Mat col = mask.col(x);
-                int count = Core.countNonZero(col);
-                col.release();
-
-                if (count > minPixelsPerColumn) {
-                    left = x;
-                    break;
-                }
+            for (int i = 0; i < actual.length; i++) {
+                double dx = actual[i].x - expected[i].x;
+                double dy = actual[i].y - expected[i].y;
+                double error = Math.sqrt(dx * dx + dy * dy);
+                total += error;
+                max = Math.max(max, error);
             }
 
-            for (int x = mask.cols() - 1; x >= 0; x--) {
-                Mat col = mask.col(x);
-                int count = Core.countNonZero(col);
-                col.release();
-
-                if (count > minPixelsPerColumn) {
-                    right = x;
-                    break;
-                }
-            }
-
-            if (left < 0 || right < 0 || right <= left) {
-                return input.clone();
-            }
-
-            int padding = 0;
-
-            left = Math.max(0, left - padding);
-            right = Math.min(input.cols() - 1, right + padding);
-
-            Rect cropRect = new Rect(
-                    left,
-                    0,
-                    right - left + 1,
-                    input.rows()
-            );
-
-            return new Mat(input, cropRect).clone();
+            return new ReprojectionError(true, total / actual.length, max);
 
         } finally {
-            gray.release();
-            mask.release();
+            projected.release();
         }
     }
 
@@ -820,4 +925,16 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             return bitmap;
         }
     }
+    private static class ReprojectionError {
+        final boolean valid;
+        final double meanPx;
+        final double maxPx;
+
+        ReprojectionError(boolean valid, double meanPx, double maxPx) {
+            this.valid = valid;
+            this.meanPx = meanPx;
+            this.maxPx = maxPx;
+        }
+    }
+
 }

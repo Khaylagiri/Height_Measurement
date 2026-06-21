@@ -90,7 +90,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void openMeasurement(Uri uri) {
-        Intent intent = new Intent(MainActivity.this, MeasurementActivity.class);
+        // Pengukuran cm wajib melewati Perspective Correction agar memiliki skala valid.
+        Intent intent = new Intent(MainActivity.this, PerspectiveCorrectionActivity.class);
         intent.putExtra("image_uri", uri.toString());
         startActivity(intent);
     }
