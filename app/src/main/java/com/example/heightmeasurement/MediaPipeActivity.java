@@ -3,7 +3,6 @@ package com.example.heightmeasurement;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
@@ -15,7 +14,6 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.exifinterface.media.ExifInterface;
 
 import com.google.mediapipe.framework.image.BitmapImageBuilder;
 import com.google.mediapipe.framework.image.MPImage;
@@ -33,10 +31,6 @@ import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
@@ -44,6 +38,7 @@ public class MediaPipeActivity extends AppCompatActivity {
 
     private static final String TAG = "MEDIAPIPE_HEIGHT";
     private static final String MODEL_ASSET_PATH = "pose_landmarker_lite.task";
+    private static final int MAX_GALLERY_IMAGE_SIDE_PX = 2200;
 
     private ImageView imageViewMediaPipe;
     private Button btnPickMediaPipeImage;
@@ -54,10 +49,20 @@ public class MediaPipeActivity extends AppCompatActivity {
     private Bitmap currentResultBitmap;
 
     private PoseLandmarker poseLandmarker;
+
+    /*
+     * Data yang sudah dikirim oleh PerspectiveCorrectionActivity lama.
+     */
     private double cmPerPixel = -1.0;
     private double boardTopY = -1.0;
     private double boardBottomY = -1.0;
     private double boardPixelHeight = -1.0;
+
+    /*
+     * Path file PNG hasil perspective.
+     */
+    private String calibratedImagePath = null;
+    private boolean calibratedFromPerspective = false;
 
     private final ActivityResultLauncher<String> pickImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
@@ -66,14 +71,31 @@ public class MediaPipeActivity extends AppCompatActivity {
                     return;
                 }
 
-                selectedBitmap = loadAndRotateBitmap(uri);
+                Bitmap loadedBitmap = ImageUtils.decodeUri(
+                        this,
+                        uri,
+                        MAX_GALLERY_IMAGE_SIDE_PX
+                );
 
-                if (selectedBitmap == null) {
-                    Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_LONG).show();
+                if (loadedBitmap == null) {
+                    Toast.makeText(
+                            this,
+                            "Gagal membuka gambar. Ukuran foto mungkin terlalu besar atau format tidak didukung.",
+                            Toast.LENGTH_LONG
+                    ).show();
                     return;
                 }
 
+                releaseDisplayedBitmaps();
+
+                selectedBitmap = loadedBitmap;
                 currentResultBitmap = null;
+
+                /*
+                 * Foto manual bukan hasil perspective, jadi tidak memiliki kalibrasi cm.
+                 */
+                resetCalibration();
+
                 imageViewMediaPipe.setImageBitmap(selectedBitmap);
 
                 btnPickMediaPipeImage.setVisibility(View.VISIBLE);
@@ -97,8 +119,15 @@ public class MediaPipeActivity extends AppCompatActivity {
         btnProcessMediaPipe = findViewById(R.id.btnProcessMediaPipe);
         btnNextMeasurement = findViewById(R.id.btnSaveMediaPipe);
 
-        btnPickMediaPipeImage.setVisibility(View.VISIBLE);
-        btnProcessMediaPipe.setVisibility(View.VISIBLE);
+        imageViewMediaPipe.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        imageViewMediaPipe.setAdjustViewBounds(true);
+
+        /*
+         * Sembunyikan dulu. loadImageFromIntentIfAvailable() yang menentukan
+         * apakah tombol pilih foto perlu ditampilkan atau tidak.
+         */
+        btnPickMediaPipeImage.setVisibility(View.GONE);
+        btnProcessMediaPipe.setVisibility(View.GONE);
 
         btnNextMeasurement.setText("Next");
         btnNextMeasurement.setVisibility(View.GONE);
@@ -134,56 +163,102 @@ public class MediaPipeActivity extends AppCompatActivity {
 
         btnNextMeasurement.setOnClickListener(v -> openMeasurementActivity());
 
+        /*
+         * Membaca gambar hasil perspective dari Intent.
+         */
         loadImageFromIntentIfAvailable();
     }
 
+    /**
+     * Ketika MediaPipeActivity dibuka dari PerspectiveCorrectionActivity,
+     * gambar hasil perspective langsung dibaca dari image_path.
+     * Pengguna tidak perlu memilih foto lagi.
+     */
     private void loadImageFromIntentIfAvailable() {
         try {
-            String imagePath = getIntent().getStringExtra("image_path");
-            String uriString = getIntent().getStringExtra("image_uri");
-            boolean autoProcess = getIntent().getBooleanExtra("auto_process", false);
-            cmPerPixel = getIntent().getDoubleExtra("cm_per_pixel", -1.0);
-            boardTopY = getIntent().getDoubleExtra("board_top_y", -1.0);
-            boardBottomY = getIntent().getDoubleExtra("board_bottom_y", -1.0);
-            boardPixelHeight = getIntent().getDoubleExtra("board_pixel_height", -1.0);
+            Intent sourceIntent = getIntent();
+
+            if (sourceIntent == null) {
+                showManualPicker();
+                return;
+            }
+
+            String imagePath = sourceIntent.getStringExtra("image_path");
+            String uriString = sourceIntent.getStringExtra("image_uri");
+            boolean autoProcess = sourceIntent.getBooleanExtra("auto_process", false);
+
+            cmPerPixel = sourceIntent.getDoubleExtra("cm_per_pixel", -1.0);
+            boardTopY = sourceIntent.getDoubleExtra("board_top_y", -1.0);
+            boardBottomY = sourceIntent.getDoubleExtra("board_bottom_y", -1.0);
+            boardPixelHeight = sourceIntent.getDoubleExtra("board_pixel_height", -1.0);
 
             boolean fromPerspective = imagePath != null && !imagePath.trim().isEmpty();
 
-            if (!fromPerspective && (uriString == null || uriString.trim().isEmpty())) {
-                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
-                btnProcessMediaPipe.setVisibility(View.VISIBLE);
-                btnNextMeasurement.setVisibility(View.GONE);
-                return;
-            }
-
             if (fromPerspective) {
-                selectedBitmap = loadBitmapFromPath(imagePath);
-            } else {
-                selectedBitmap = loadAndRotateBitmap(Uri.parse(uriString));
-            }
+                File imageFile = new File(imagePath);
 
-            if (selectedBitmap == null) {
-                Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_LONG).show();
+                if (!imageFile.exists() || !imageFile.isFile()) {
+                    Toast.makeText(
+                            this,
+                            "File hasil perspective tidak ditemukan",
+                            Toast.LENGTH_LONG
+                    ).show();
 
-                if (fromPerspective) {
-                    btnPickMediaPipeImage.setVisibility(View.GONE);
-                } else {
-                    btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                    Log.e(TAG, "File perspective tidak ditemukan: " + imagePath);
+                    showManualPicker();
+                    return;
                 }
 
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                options.inSampleSize = 1;
+
+                Bitmap loadedBitmap = BitmapFactory.decodeFile(imagePath, options);
+
+                if (loadedBitmap == null) {
+                    Toast.makeText(
+                            this,
+                            "Gagal membuka gambar hasil perspective",
+                            Toast.LENGTH_LONG
+                    ).show();
+
+                    showManualPicker();
+                    return;
+                }
+
+                releaseDisplayedBitmaps();
+
+                selectedBitmap = loadedBitmap;
+                currentResultBitmap = null;
+                calibratedFromPerspective = true;
+                calibratedImagePath = imagePath;
+
+                imageViewMediaPipe.setImageBitmap(selectedBitmap);
+
+                /*
+                 * Karena gambar sudah berasal dari perspective,
+                 * tombol Pilih Foto disembunyikan.
+                 */
+                btnPickMediaPipeImage.setVisibility(View.GONE);
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
                 btnNextMeasurement.setVisibility(View.GONE);
-                return;
-            }
 
-            currentResultBitmap = null;
-            imageViewMediaPipe.setImageBitmap(selectedBitmap);
-
-            btnProcessMediaPipe.setVisibility(View.VISIBLE);
-            btnNextMeasurement.setVisibility(View.GONE);
-
-            if (fromPerspective) {
-                btnPickMediaPipeImage.setVisibility(View.GONE);
+                Log.i(
+                        TAG,
+                        String.format(
+                                Locale.US,
+                                "Perspective diterima: path=%s, bitmap=%dx%d, "
+                                        + "cmPerPixel=%.6f, boardTop=%.1f, "
+                                        + "boardBottom=%.1f, boardHeight=%.1f",
+                                imagePath,
+                                selectedBitmap.getWidth(),
+                                selectedBitmap.getHeight(),
+                                cmPerPixel,
+                                boardTopY,
+                                boardBottomY,
+                                boardPixelHeight
+                        )
+                );
 
                 Toast.makeText(
                         this,
@@ -191,46 +266,91 @@ public class MediaPipeActivity extends AppCompatActivity {
                         Toast.LENGTH_SHORT
                 ).show();
 
-            } else {
-                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                if (autoProcess) {
+                    processMediaPipePose();
+                }
 
-                Toast.makeText(
+                return;
+            }
+
+            /*
+             * Kompatibilitas jika Activity menerima image_uri secara langsung.
+             */
+            if (uriString != null && !uriString.trim().isEmpty()) {
+                Bitmap loadedBitmap = ImageUtils.decodeUri(
                         this,
-                        "Foto siap diproses",
-                        Toast.LENGTH_SHORT
-                ).show();
+                        Uri.parse(uriString),
+                        MAX_GALLERY_IMAGE_SIDE_PX
+                );
+
+                if (loadedBitmap == null) {
+                    Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_LONG).show();
+                    showManualPicker();
+                    return;
+                }
+
+                releaseDisplayedBitmaps();
+
+                selectedBitmap = loadedBitmap;
+                currentResultBitmap = null;
+                resetCalibration();
+
+                imageViewMediaPipe.setImageBitmap(selectedBitmap);
+
+                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                btnProcessMediaPipe.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
+
+                if (autoProcess) {
+                    processMediaPipePose();
+                }
+
+                return;
             }
 
-            if (autoProcess) {
-                processMediaPipePose();
-            }
+            /*
+             * MediaPipeActivity dibuka langsung dari menu utama.
+             */
+            showManualPicker();
+
+        } catch (OutOfMemoryError error) {
+            Log.e(TAG, "Memori tidak cukup membuka hasil perspective", error);
+
+            Toast.makeText(
+                    this,
+                    "Memori tidak cukup membuka gambar",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            showManualPicker();
 
         } catch (Exception e) {
             Log.e(TAG, "loadImageFromIntentIfAvailable error", e);
+
             Toast.makeText(
                     this,
                     "Error membuka gambar: " + e.getMessage(),
                     Toast.LENGTH_LONG
             ).show();
 
-            btnProcessMediaPipe.setVisibility(View.VISIBLE);
-            btnNextMeasurement.setVisibility(View.GONE);
+            showManualPicker();
         }
     }
 
-    private Bitmap loadBitmapFromPath(String imagePath) {
-        try {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+    private void showManualPicker() {
+        calibratedFromPerspective = false;
+        calibratedImagePath = null;
 
-            return BitmapFactory.decodeFile(imagePath, options);
+        imageViewMediaPipe.setImageBitmap(null);
 
-        } catch (Exception e) {
-            Log.e(TAG, "loadBitmapFromPath error", e);
-            return null;
-        }
+        btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+        btnProcessMediaPipe.setVisibility(View.GONE);
+        btnNextMeasurement.setVisibility(View.GONE);
     }
 
+    /**
+     * Mengirim gambar bersih hasil perspective yang sama ke MeasurementActivity.
+     */
     private void openMeasurementActivity() {
         if (currentResultBitmap == null) {
             Toast.makeText(
@@ -241,67 +361,96 @@ public class MediaPipeActivity extends AppCompatActivity {
             return;
         }
 
-        /*
-         * PENTING:
-         * Yang dikirim ke MeasurementActivity adalah selectedBitmap,
-         * yaitu gambar bersih hasil perspective.
-         *
-         * Jangan kirim currentResultBitmap karena itu sudah ada gambar titik/garis MediaPipe.
-         */
-        String imageUriString = saveBitmapToCacheForMeasurement(selectedBitmap);
+        if (!calibratedFromPerspective) {
+            Toast.makeText(
+                    this,
+                    "Pengukuran cm hanya boleh dilakukan dari hasil Perspective Correction.",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
 
-        if (imageUriString == null) {
-            Toast.makeText(this, "Gagal menyiapkan gambar untuk Measurement", Toast.LENGTH_LONG).show();
+        if (!hasValidCalibration()) {
+            Toast.makeText(
+                    this,
+                    "Data kalibrasi perspective tidak valid",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+
+        if (calibratedImagePath == null || calibratedImagePath.trim().isEmpty()) {
+            Toast.makeText(
+                    this,
+                    "Path bitmap hasil perspective tidak tersedia",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+
+        File imageFile = new File(calibratedImagePath);
+
+        if (!imageFile.exists() || !imageFile.isFile()) {
+            Toast.makeText(
+                    this,
+                    "File hasil perspective tidak ditemukan",
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
 
         Intent intent = new Intent(MediaPipeActivity.this, MeasurementActivity.class);
-        intent.putExtra("image_uri", imageUriString);
+
+        /*
+         * Kirim image_path untuk MeasurementActivity versi baru.
+         */
+        intent.putExtra("image_path", calibratedImagePath);
+
+        /*
+         * Kirim image_uri untuk MeasurementActivity versi lama.
+         */
+        intent.putExtra("image_uri", Uri.fromFile(imageFile).toString());
+
         intent.putExtra("cm_per_pixel", cmPerPixel);
         intent.putExtra("board_top_y", boardTopY);
         intent.putExtra("board_bottom_y", boardBottomY);
         intent.putExtra("board_pixel_height", boardPixelHeight);
+
         startActivity(intent);
     }
 
-    private String saveBitmapToCacheForMeasurement(Bitmap bitmap) {
-        FileOutputStream fos = null;
-
-        try {
-            File cacheDir = new File(getCacheDir(), "mediapipe_result");
-
-            if (!cacheDir.exists()) {
-                cacheDir.mkdirs();
-            }
-
-            String fileName = new SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.getDefault()
-            ).format(new Date());
-
-            File imageFile = new File(
-                    cacheDir,
-                    "MEDIAPIPE_TO_MEASUREMENT_" + fileName + ".png"
-            );
-
-            fos = new FileOutputStream(imageFile);
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
-            fos.flush();
-
-            return Uri.fromFile(imageFile).toString();
-
-        } catch (Exception e) {
-            Log.e(TAG, "saveBitmapToCacheForMeasurement error", e);
-            return null;
-
-        } finally {
-            if (fos != null) {
-                try {
-                    fos.close();
-                } catch (Exception ignored) {
-                }
-            }
+    /**
+     * Validasi minimal sesuai data yang sudah dikirim kode perspective lama.
+     */
+    private boolean hasValidCalibration() {
+        if (cmPerPixel <= 0.0) {
+            return false;
         }
+
+        if (boardTopY < 0.0) {
+            return false;
+        }
+
+        if (boardBottomY <= boardTopY) {
+            return false;
+        }
+
+        if (boardPixelHeight <= 0.0) {
+            return false;
+        }
+
+        double calculatedBoardHeight = boardBottomY - boardTopY;
+
+        return Math.abs(calculatedBoardHeight - boardPixelHeight) <= 2.0;
+    }
+
+    private void resetCalibration() {
+        cmPerPixel = -1.0;
+        boardTopY = -1.0;
+        boardBottomY = -1.0;
+        boardPixelHeight = -1.0;
+        calibratedImagePath = null;
+        calibratedFromPerspective = false;
     }
 
     @Override
@@ -312,6 +461,8 @@ public class MediaPipeActivity extends AppCompatActivity {
             poseLandmarker.close();
             poseLandmarker = null;
         }
+
+        releaseDisplayedBitmaps();
     }
 
     private void initPoseLandmarker() {
@@ -336,6 +487,7 @@ public class MediaPipeActivity extends AppCompatActivity {
 
         } catch (Exception e) {
             Log.e(TAG, "initPoseLandmarker error", e);
+
             Toast.makeText(
                     this,
                     "MediaPipe gagal init. Cek file pose_landmarker_lite.task di assets.",
@@ -368,9 +520,17 @@ public class MediaPipeActivity extends AppCompatActivity {
             PoseLandmarkerResult result = poseLandmarker.detect(mpImage);
 
             if (result == null || result.landmarks().isEmpty()) {
-                Toast.makeText(this, "Tubuh tidak terdeteksi oleh MediaPipe", Toast.LENGTH_LONG).show();
+                Toast.makeText(
+                        this,
+                        "Tubuh tidak terdeteksi oleh MediaPipe",
+                        Toast.LENGTH_LONG
+                ).show();
 
-                currentResultBitmap = drawError(selectedBitmap, "Tubuh tidak terdeteksi");
+                currentResultBitmap = drawError(
+                        selectedBitmap,
+                        "Tubuh tidak terdeteksi"
+                );
+
                 imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
@@ -381,7 +541,11 @@ public class MediaPipeActivity extends AppCompatActivity {
             List<NormalizedLandmark> landmarks = result.landmarks().get(0);
 
             if (landmarks.size() < 33) {
-                currentResultBitmap = drawError(selectedBitmap, "Landmark tubuh tidak lengkap");
+                currentResultBitmap = drawError(
+                        selectedBitmap,
+                        "Landmark tubuh tidak lengkap"
+                );
+
                 imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
                 btnProcessMediaPipe.setVisibility(View.VISIBLE);
@@ -392,17 +556,55 @@ public class MediaPipeActivity extends AppCompatActivity {
             currentResultBitmap = drawPoseAndHeight(selectedBitmap, landmarks);
             imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
-            btnPickMediaPipeImage.setVisibility(View.GONE);
             btnProcessMediaPipe.setVisibility(View.GONE);
-            btnNextMeasurement.setVisibility(View.VISIBLE);
 
-            Toast.makeText(this, "MediaPipe selesai diproses", Toast.LENGTH_SHORT).show();
+            if (calibratedFromPerspective && hasValidCalibration()) {
+                btnPickMediaPipeImage.setVisibility(View.GONE);
+                btnNextMeasurement.setVisibility(View.VISIBLE);
+
+                Toast.makeText(
+                        this,
+                        "MediaPipe selesai diproses",
+                        Toast.LENGTH_SHORT
+                ).show();
+
+            } else {
+                btnPickMediaPipeImage.setVisibility(View.VISIBLE);
+                btnNextMeasurement.setVisibility(View.GONE);
+
+                Toast.makeText(
+                        this,
+                        "Pose terdeteksi. Untuk menghitung cm, mulai dari Perspective Correction.",
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+
+        } catch (OutOfMemoryError oom) {
+            Log.e(TAG, "processMediaPipePose out of memory", oom);
+
+            Toast.makeText(
+                    this,
+                    "Memori tidak cukup untuk memproses gambar",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            btnProcessMediaPipe.setVisibility(View.VISIBLE);
+            btnNextMeasurement.setVisibility(View.GONE);
 
         } catch (Exception e) {
             Log.e(TAG, "processMediaPipePose error", e);
-            Toast.makeText(this, "Error MediaPipe: " + e.getMessage(), Toast.LENGTH_LONG).show();
 
-            currentResultBitmap = drawError(selectedBitmap, "ERROR: " + e.getMessage());
+            Toast.makeText(
+                    this,
+                    "Error MediaPipe: " + e.getMessage(),
+                    Toast.LENGTH_LONG
+            ).show();
+
+            currentResultBitmap = drawError(
+                    selectedBitmap,
+                    "ERROR: " + e.getMessage()
+            );
+
             imageViewMediaPipe.setImageBitmap(currentResultBitmap);
 
             btnProcessMediaPipe.setVisibility(View.VISIBLE);
@@ -410,7 +612,10 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    private Bitmap drawPoseAndHeight(Bitmap source, List<NormalizedLandmark> landmarks) {
+    private Bitmap drawPoseAndHeight(
+            Bitmap source,
+            List<NormalizedLandmark> landmarks
+    ) {
         Mat mat = new Mat();
 
         try {
@@ -499,10 +704,6 @@ public class MediaPipeActivity extends AppCompatActivity {
                     -1
             );
 
-            /*
-             * Tidak menampilkan tulisan tinggi di halaman MediaPipe.
-             * Halaman ini hanya untuk validasi pose/landmark.
-             */
             drawMeasurementSegments(mat, landmarks, w, h);
 
             Bitmap resultBitmap = Bitmap.createBitmap(
@@ -539,15 +740,20 @@ public class MediaPipeActivity extends AppCompatActivity {
                     nose.x + dirX * headTopCorrection,
                     nose.y + dirY * headTopCorrection
             );
-        } else {
-            return new Point(
-                    nose.x,
-                    nose.y - headTopCorrection
-            );
         }
+
+        return new Point(
+                nose.x,
+                nose.y - headTopCorrection
+        );
     }
 
-    private void drawMeasurementSegments(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
+    private void drawMeasurementSegments(
+            Mat mat,
+            List<NormalizedLandmark> landmarks,
+            int w,
+            int h
+    ) {
         try {
             Point nose = landmarkToPoint(landmarks.get(0), w, h);
 
@@ -597,21 +803,21 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    private void drawPoseConnections(Mat mat, List<NormalizedLandmark> landmarks, int w, int h) {
+    private void drawPoseConnections(
+            Mat mat,
+            List<NormalizedLandmark> landmarks,
+            int w,
+            int h
+    ) {
         int[][] connections = new int[][]{
                 {0, 1}, {1, 2}, {2, 3}, {3, 7},
                 {0, 4}, {4, 5}, {5, 6}, {6, 8},
                 {9, 10},
-
                 {11, 12},
-
                 {11, 13}, {13, 15},
                 {12, 14}, {14, 16},
-
                 {11, 23}, {12, 24}, {23, 24},
-
                 {23, 25}, {25, 27}, {27, 29}, {29, 31},
-
                 {24, 26}, {26, 28}, {28, 30}, {30, 32}
         };
 
@@ -631,7 +837,8 @@ public class MediaPipeActivity extends AppCompatActivity {
             double x2 = p2.x() * w;
             double y2 = p2.y() * h;
 
-            if (!isPointInside(x1, y1, w, h) || !isPointInside(x2, y2, w, h)) {
+            if (!isPointInside(x1, y1, w, h)
+                    || !isPointInside(x2, y2, w, h)) {
                 continue;
             }
 
@@ -645,7 +852,11 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    private Point landmarkToPoint(NormalizedLandmark landmark, int w, int h) {
+    private Point landmarkToPoint(
+            NormalizedLandmark landmark,
+            int w,
+            int h
+    ) {
         return new Point(
                 landmark.x() * w,
                 landmark.y() * h
@@ -666,7 +877,12 @@ public class MediaPipeActivity extends AppCompatActivity {
         return Math.sqrt(dx * dx + dy * dy);
     }
 
-    private boolean isPointInside(double x, double y, int w, int h) {
+    private boolean isPointInside(
+            double x,
+            double y,
+            int w,
+            int h
+    ) {
         return x >= 0 && x < w && y >= 0 && y < h;
     }
 
@@ -712,80 +928,20 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
     }
 
-    private Bitmap loadAndRotateBitmap(Uri imageUri) {
-        try {
-            Bitmap original = loadBitmapFromUri(imageUri);
+    private void releaseDisplayedBitmaps() {
+        imageViewMediaPipe.setImageBitmap(null);
 
-            if (original == null) {
-                return null;
-            }
-
-            return rotateBitmapIfRequired(original, imageUri);
-
-        } catch (Exception e) {
-            Log.e(TAG, "loadAndRotateBitmap error", e);
-            return null;
+        if (currentResultBitmap != null
+                && currentResultBitmap != selectedBitmap
+                && !currentResultBitmap.isRecycled()) {
+            currentResultBitmap.recycle();
         }
-    }
 
-    private Bitmap loadBitmapFromUri(Uri uri) {
-        try (InputStream inputStream = getContentResolver().openInputStream(uri)) {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-
-            return BitmapFactory.decodeStream(inputStream, null, options);
-
-        } catch (Exception e) {
-            Log.e(TAG, "loadBitmapFromUri error", e);
-            return null;
+        if (selectedBitmap != null && !selectedBitmap.isRecycled()) {
+            selectedBitmap.recycle();
         }
-    }
 
-    private Bitmap rotateBitmapIfRequired(Bitmap bitmap, Uri imageUri) {
-        try (InputStream inputStream = getContentResolver().openInputStream(imageUri)) {
-            if (inputStream == null) {
-                return bitmap;
-            }
-
-            ExifInterface exif = new ExifInterface(inputStream);
-
-            int orientation = exif.getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL
-            );
-
-            Matrix matrix = new Matrix();
-
-            switch (orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90:
-                    matrix.postRotate(90);
-                    break;
-
-                case ExifInterface.ORIENTATION_ROTATE_180:
-                    matrix.postRotate(180);
-                    break;
-
-                case ExifInterface.ORIENTATION_ROTATE_270:
-                    matrix.postRotate(270);
-                    break;
-
-                default:
-                    return bitmap;
-            }
-
-            return Bitmap.createBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    bitmap.getWidth(),
-                    bitmap.getHeight(),
-                    matrix,
-                    true
-            );
-
-        } catch (Exception e) {
-            Log.e(TAG, "rotateBitmapIfRequired error", e);
-            return bitmap;
-        }
+        currentResultBitmap = null;
+        selectedBitmap = null;
     }
 }
