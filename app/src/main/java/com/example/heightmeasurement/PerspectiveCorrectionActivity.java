@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -40,6 +42,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
@@ -67,6 +71,10 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private static final int CROP_WHITE_THRESHOLD = 245;
 
+    // Membatasi ukuran foto masukan agar Bitmap dan Mat OpenCV tidak menyebabkan OOM.
+    // Nilai perspective, koordinat marker, dan ukuran output tetap sama.
+    private static final int MAX_INPUT_DIMENSION_PX = 3000;
+
     private static final int OUTPUT_WIDTH_PX =
             (int) Math.round((BOARD_COLS + LEFT_RIGHT_MARGIN_CELLS * 2.0) * PX_PER_CELL);
 
@@ -86,6 +94,11 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     private Bitmap currentBitmap;
 
     private boolean perspectiveSuccess = false;
+    private volatile boolean perspectiveRunning = false;
+
+    // Perspective dijalankan di background thread agar UI tidak freeze/ANR.
+    private final ExecutorService perspectiveExecutor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -137,7 +150,9 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             return;
         }
 
-        currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
+        // Jangan copy bitmap awal. Copy ini menggandakan penggunaan memori dan dapat
+        // membuat aplikasi tertutup ketika OpenCV mulai membuat beberapa Mat besar.
+        currentBitmap = originalBitmap;
         imageViewResult.setImageBitmap(currentBitmap);
 
         btnPerspective.setOnClickListener(v -> runPerspectiveOnly());
@@ -150,56 +165,100 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     }
 
     private void runPerspectiveOnly() {
-        try {
-            btnPerspective.setEnabled(false);
-            btnSaveGalleryImage.setVisibility(View.GONE);
-            perspectiveSuccess = false;
+        if (perspectiveRunning || originalBitmap == null || originalBitmap.isRecycled()) {
+            return;
+        }
 
-            Bitmap result = autoPerspectiveCamScannerStyle(originalBitmap);
+        perspectiveRunning = true;
+        perspectiveSuccess = false;
 
-            if (result == null) {
-                Toast.makeText(
-                        this,
-                        "Perspective gagal. Pastikan marker ArUco terlihat jelas dan tidak terlalu tertutup badan.",
-                        Toast.LENGTH_LONG
-                ).show();
+        btnPerspective.setEnabled(false);
+        btnPerspective.setText("Memproses...");
+        btnSaveGalleryImage.setVisibility(View.GONE);
 
-                btnPerspective.setVisibility(View.VISIBLE);
-                return;
+        perspectiveExecutor.execute(() -> {
+            Bitmap result = null;
+            String errorMessage = null;
+
+            try {
+                result = autoPerspectiveCamScannerStyle(originalBitmap);
+
+                if (result == null) {
+                    errorMessage =
+                            "Perspective gagal. Pastikan marker ArUco terlihat jelas " +
+                                    "dan tidak terlalu tertutup badan.";
+                }
+
+            } catch (OutOfMemoryError e) {
+                Log.e(TAG, "runPerspectiveOnly kehabisan memori", e);
+                errorMessage =
+                        "Memori tidak cukup untuk memproses gambar. " +
+                                "Gambar sudah dibatasi ukurannya, silakan coba ulang.";
+
+            } catch (Exception e) {
+                Log.e(TAG, "runPerspectiveOnly error", e);
+                errorMessage = "Perspective error: " + getSafeErrorMessage(e);
             }
 
-            currentBitmap = result;
-            imageViewResult.setImageBitmap(currentBitmap);
+            final Bitmap finalResult = result;
+            final String finalErrorMessage = errorMessage;
 
-            perspectiveSuccess = true;
+            mainHandler.post(() -> finishPerspectiveProcess(
+                    finalResult,
+                    finalErrorMessage
+            ));
+        });
+    }
 
-            /*
-             * Setelah perspective berhasil:
-             * tombol Perspective Correction dihilangkan.
-             */
-            btnPerspective.setVisibility(View.GONE);
+    private void finishPerspectiveProcess(Bitmap result, String errorMessage) {
+        perspectiveRunning = false;
 
-            /*
-             * Setelah perspective berhasil:
-             * tombol Next dimunculkan.
-             */
-            btnSaveGalleryImage.setVisibility(View.VISIBLE);
+        if (isFinishing() || isDestroyed()) {
+            if (result != null && !result.isRecycled()) {
+                result.recycle();
+            }
+            return;
+        }
+
+        btnPerspective.setEnabled(true);
+        btnPerspective.setText("Perspective Correction");
+
+        if (result == null) {
+            perspectiveSuccess = false;
+            btnPerspective.setVisibility(View.VISIBLE);
+            btnSaveGalleryImage.setVisibility(View.GONE);
 
             Toast.makeText(
                     this,
-                    "Perspective berhasil",
-                    Toast.LENGTH_SHORT
+                    errorMessage != null ? errorMessage : "Perspective gagal",
+                    Toast.LENGTH_LONG
             ).show();
-
-        } catch (Exception e) {
-            Log.e(TAG, "runPerspectiveOnly error", e);
-            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-
-            btnPerspective.setVisibility(View.VISIBLE);
-
-        } finally {
-            btnPerspective.setEnabled(true);
+            return;
         }
+
+        // Recycle hanya hasil perspective lama, jangan recycle originalBitmap.
+        if (currentBitmap != null
+                && currentBitmap != originalBitmap
+                && currentBitmap != result
+                && !currentBitmap.isRecycled()) {
+            currentBitmap.recycle();
+        }
+
+        currentBitmap = result;
+        imageViewResult.setImageBitmap(currentBitmap);
+        perspectiveSuccess = true;
+
+        btnPerspective.setVisibility(View.GONE);
+        btnSaveGalleryImage.setVisibility(View.VISIBLE);
+
+        Toast.makeText(this, "Perspective berhasil", Toast.LENGTH_SHORT).show();
+    }
+
+    private String getSafeErrorMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? throwable.getClass().getSimpleName()
+                : message;
     }
 
     private void openMediaPipeWithPerspectiveResult() {
@@ -293,7 +352,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
         MatOfPoint2f imagePointsMat = null;
         MatOfPoint2f boardPointsMat = null;
-        Mat homography = new Mat();
+        Mat homography = null;
 
         try {
             Utils.bitmapToMat(bitmap, srcMat);
@@ -303,7 +362,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             } else if (srcMat.channels() == 3) {
                 Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_BGR2GRAY);
             } else {
-                gray = srcMat.clone();
+                srcMat.copyTo(gray);
             }
 
             Imgproc.equalizeHist(gray, gray);
@@ -313,6 +372,10 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             ArucoDetector detector = new ArucoDetector(dictionary, parameters);
 
             detector.detectMarkers(gray, corners, ids, rejected);
+
+            // Citra grayscale tidak diperlukan lagi setelah deteksi marker selesai.
+            // Dilepas lebih awal untuk menurunkan penggunaan memori puncak.
+            gray.release();
 
             if (ids.empty() || corners.isEmpty()) {
                 return null;
@@ -360,7 +423,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                     5.0
             );
 
-            if (homography.empty()) {
+            if (homography == null || homography.empty()) {
                 return null;
             }
 
@@ -372,8 +435,26 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                     Imgproc.INTER_LINEAR
             );
 
+            // Mat sumber tidak digunakan lagi setelah warpPerspective.
+            srcMat.release();
+
             shiftedWarped = shiftResultX(warped, RESULT_SHIFT_X_PX);
+
+            // Hasil warp sebelum shift tidak diperlukan lagi.
+            warped.release();
+
             croppedWarped = cropHorizontalBlankBorders(shiftedWarped);
+
+            // Hasil shift tidak diperlukan lagi setelah proses crop.
+            shiftedWarped.release();
+            shiftedWarped = null;
+
+            if (croppedWarped == null
+                    || croppedWarped.empty()
+                    || croppedWarped.cols() <= 0
+                    || croppedWarped.rows() <= 0) {
+                return null;
+            }
 
             Bitmap result = Bitmap.createBitmap(
                     croppedWarped.cols(),
@@ -406,7 +487,11 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             }
 
             ids.release();
-            homography.release();
+
+            if (homography != null) {
+                homography.release();
+            }
+
             srcMat.release();
             gray.release();
             warped.release();
@@ -423,25 +508,31 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private Mat shiftResultX(Mat input, int shiftXPx) {
         Mat output = new Mat(input.rows(), input.cols(), input.type());
-
         Mat translation = Mat.eye(2, 3, CvType.CV_64F);
 
-        translation.put(0, 2, shiftXPx);
-        translation.put(1, 2, 0);
+        try {
+            translation.put(0, 2, shiftXPx);
+            translation.put(1, 2, 0);
 
-        Imgproc.warpAffine(
-                input,
-                output,
-                translation,
-                input.size(),
-                Imgproc.INTER_LINEAR,
-                Core.BORDER_CONSTANT,
-                new Scalar(255, 255, 255, 255)
-        );
+            Imgproc.warpAffine(
+                    input,
+                    output,
+                    translation,
+                    input.size(),
+                    Imgproc.INTER_LINEAR,
+                    Core.BORDER_CONSTANT,
+                    new Scalar(255, 255, 255, 255)
+            );
 
-        translation.release();
+            return output;
 
-        return output;
+        } catch (Exception e) {
+            output.release();
+            throw e;
+
+        } finally {
+            translation.release();
+        }
     }
 
     private Mat cropHorizontalBlankBorders(Mat input) {
@@ -454,7 +545,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
             } else if (input.channels() == 3) {
                 Imgproc.cvtColor(input, gray, Imgproc.COLOR_BGR2GRAY);
             } else {
-                gray = input.clone();
+                input.copyTo(gray);
             }
 
             Imgproc.threshold(
@@ -508,7 +599,10 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                     input.rows()
             );
 
-            return new Mat(input, cropRect).clone();
+            Mat roi = new Mat(input, cropRect);
+            Mat cropped = roi.clone();
+            roi.release();
+            return cropped;
 
         } finally {
             gray.release();
@@ -761,16 +855,57 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
     }
 
     private Bitmap loadBitmapFromUri(Uri uri) {
-        try (InputStream inputStream = getContentResolver().openInputStream(uri)) {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        try {
+            BitmapFactory.Options boundsOptions = new BitmapFactory.Options();
+            boundsOptions.inJustDecodeBounds = true;
 
-            return BitmapFactory.decodeStream(inputStream, null, options);
+            try (InputStream boundsStream =
+                         getContentResolver().openInputStream(uri)) {
+                if (boundsStream == null) {
+                    return null;
+                }
+                BitmapFactory.decodeStream(boundsStream, null, boundsOptions);
+            }
+
+            if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
+                return null;
+            }
+
+            BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
+            decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            decodeOptions.inSampleSize = calculateInSampleSize(
+                    boundsOptions.outWidth,
+                    boundsOptions.outHeight,
+                    MAX_INPUT_DIMENSION_PX
+            );
+
+            try (InputStream decodeStream =
+                         getContentResolver().openInputStream(uri)) {
+                if (decodeStream == null) {
+                    return null;
+                }
+                return BitmapFactory.decodeStream(decodeStream, null, decodeOptions);
+            }
+
+        } catch (OutOfMemoryError e) {
+            Log.e(TAG, "loadBitmapFromUri kehabisan memori", e);
+            return null;
 
         } catch (Exception e) {
             Log.e(TAG, "loadBitmapFromUri error", e);
             return null;
         }
+    }
+
+    private int calculateInSampleSize(int width, int height, int maxDimension) {
+        int inSampleSize = 1;
+
+        while ((width / inSampleSize) > maxDimension
+                || (height / inSampleSize) > maxDimension) {
+            inSampleSize *= 2;
+        }
+
+        return Math.max(1, inSampleSize);
     }
 
     private Bitmap rotateBitmapIfRequired(Bitmap bitmap, Uri imageUri) {
@@ -805,7 +940,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                     return bitmap;
             }
 
-            return Bitmap.createBitmap(
+            Bitmap rotatedBitmap = Bitmap.createBitmap(
                     bitmap,
                     0,
                     0,
@@ -815,9 +950,22 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
                     true
             );
 
+            if (rotatedBitmap != bitmap && !bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
+
+            return rotatedBitmap;
+
         } catch (Exception e) {
             Log.e(TAG, "rotateBitmapIfRequired error", e);
             return bitmap;
         }
     }
+    @Override
+    protected void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
+        perspectiveExecutor.shutdownNow();
+        super.onDestroy();
+    }
+
 }
