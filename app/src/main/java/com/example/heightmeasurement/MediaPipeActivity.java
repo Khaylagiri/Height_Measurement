@@ -232,7 +232,7 @@ public class MediaPipeActivity extends AppCompatActivity {
     }
 
     private void openMeasurementActivity() {
-        if (currentResultBitmap == null) {
+        if (selectedBitmap == null || currentResultBitmap == null) {
             Toast.makeText(
                     this,
                     "Proses MediaPipe dulu sebelum lanjut ke Measurement",
@@ -242,21 +242,36 @@ public class MediaPipeActivity extends AppCompatActivity {
         }
 
         /*
-         * PENTING:
-         * Yang dikirim ke MeasurementActivity adalah selectedBitmap,
-         * yaitu gambar bersih hasil perspective.
+         * Kirim DUA gambar:
+         * 1. selectedBitmap = gambar bersih untuk proses hitung tinggi.
+         * 2. currentResultBitmap = gambar yang sudah berisi titik/garis landmark
+         *    untuk langsung ditampilkan ketika halaman Measurement dibuka.
          *
-         * Jangan kirim currentResultBitmap karena itu sudah ada gambar titik/garis MediaPipe.
+         * Dengan cara ini landmark tidak hilang, tetapi proses pengukuran tetap
+         * memakai gambar bersih supaya garis hasil gambar tidak mengganggu contour.
          */
-        String imageUriString = saveBitmapToCacheForMeasurement(selectedBitmap);
+        String cleanImageUri = saveBitmapToCacheForMeasurement(
+                selectedBitmap,
+                "CLEAN"
+        );
 
-        if (imageUriString == null) {
-            Toast.makeText(this, "Gagal menyiapkan gambar untuk Measurement", Toast.LENGTH_LONG).show();
+        String landmarkImageUri = saveBitmapToCacheForMeasurement(
+                currentResultBitmap,
+                "LANDMARK"
+        );
+
+        if (cleanImageUri == null || landmarkImageUri == null) {
+            Toast.makeText(
+                    this,
+                    "Gagal menyiapkan gambar untuk Measurement",
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
 
         Intent intent = new Intent(MediaPipeActivity.this, MeasurementActivity.class);
-        intent.putExtra("image_uri", imageUriString);
+        intent.putExtra("image_uri", cleanImageUri);
+        intent.putExtra("landmark_image_uri", landmarkImageUri);
         intent.putExtra("cm_per_pixel", cmPerPixel);
         intent.putExtra("board_top_y", boardTopY);
         intent.putExtra("board_bottom_y", boardBottomY);
@@ -264,7 +279,7 @@ public class MediaPipeActivity extends AppCompatActivity {
         startActivity(intent);
     }
 
-    private String saveBitmapToCacheForMeasurement(Bitmap bitmap) {
+    private String saveBitmapToCacheForMeasurement(Bitmap bitmap, String prefix) {
         FileOutputStream fos = null;
 
         try {
@@ -281,7 +296,7 @@ public class MediaPipeActivity extends AppCompatActivity {
 
             File imageFile = new File(
                     cacheDir,
-                    "MEDIAPIPE_TO_MEASUREMENT_" + fileName + ".png"
+                    prefix + "_MEDIAPIPE_TO_MEASUREMENT_" + fileName + ".png"
             );
 
             fos = new FileOutputStream(imageFile);

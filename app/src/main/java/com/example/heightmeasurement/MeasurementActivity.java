@@ -84,10 +84,16 @@ public class MeasurementActivity extends AppCompatActivity {
     private static final double SUBJECT_DISTANCE_FROM_BOARD_CM = 50.0;
 
     /*
-     * Kalibrasi akhir tambahan (setelah depth correction).
-     * Biarkan 1.0 dulu. Hanya untuk koreksi kecil residual.
+     * Kalibrasi akhir berdasarkan pengujian aplikasi yang sebelumnya membaca
+     * sekitar 4 cm lebih pendek pada tinggi kurang lebih 160 cm.
+     *
+     * Rumus kalibrasi yang benar adalah proporsional:
+     * faktor = tinggi_manual / tinggi_aplikasi_sebelum_kalibrasi
+     *
+     * Contoh 160 / 156 = 1.02564, dibulatkan menjadi 1.025.
+     * Jangan menambahkan +4 cm secara langsung karena error harus mengikuti skala.
      */
-    private static final double HEIGHT_CALIBRATION_FACTOR = 1.0;
+    private static final double HEIGHT_CALIBRATION_FACTOR = 1.025;
 
     private ImageView imageViewMeasurement;
     private TextView tvMeasurementResult;
@@ -95,6 +101,7 @@ public class MeasurementActivity extends AppCompatActivity {
     private Button btnSaveMeasurement;
 
     private Bitmap originalBitmap;
+    private Bitmap landmarkPreviewBitmap;
     private Bitmap currentBitmap;
 
     private PoseLandmarker poseLandmarker;
@@ -141,6 +148,7 @@ public class MeasurementActivity extends AppCompatActivity {
         }
 
         String uriString = getIntent().getStringExtra("image_uri");
+        String landmarkUriString = getIntent().getStringExtra("landmark_image_uri");
 
         if (uriString == null || uriString.trim().isEmpty()) {
             Toast.makeText(this, "Gambar tidak ditemukan", Toast.LENGTH_SHORT).show();
@@ -148,6 +156,10 @@ public class MeasurementActivity extends AppCompatActivity {
             return;
         }
 
+        /*
+         * originalBitmap selalu gambar bersih. Bitmap ini dipakai ulang oleh
+         * MediaPipe dan contour saat tombol Hitung Tinggi ditekan.
+         */
         originalBitmap = loadAndRotateBitmap(Uri.parse(uriString));
 
         if (originalBitmap == null) {
@@ -156,10 +168,25 @@ public class MeasurementActivity extends AppCompatActivity {
             return;
         }
 
-        currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
-        imageViewMeasurement.setImageBitmap(currentBitmap);
+        /*
+         * landmarkPreviewBitmap hanya untuk tampilan awal agar titik landmark
+         * dari halaman MediaPipe tidak hilang setelah tombol Next ditekan.
+         */
+        if (landmarkUriString != null && !landmarkUriString.trim().isEmpty()) {
+            landmarkPreviewBitmap = loadAndRotateBitmap(Uri.parse(landmarkUriString));
+        }
 
-        tvMeasurementResult.setText("Siap menghitung tinggi badan");
+        if (landmarkPreviewBitmap != null) {
+            currentBitmap = landmarkPreviewBitmap;
+            tvMeasurementResult.setText(
+                    "Landmark MediaPipe tetap ditampilkan. Tekan Hitung Tinggi untuk memproses."
+            );
+        } else {
+            currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
+            tvMeasurementResult.setText("Siap menghitung tinggi badan");
+        }
+
+        imageViewMeasurement.setImageBitmap(currentBitmap);
 
         btnProcessMeasurement.setOnClickListener(v -> runMeasurementPipeline());
 
@@ -305,6 +332,7 @@ public class MeasurementActivity extends AppCompatActivity {
                             "boardPixelHeight: %.1f px\n" +
                             "cmPerPixel: %.6f cm/px\n" +
                             "Depth Factor: %.3f\n" +
+                            "Calibration Factor: %.3f\n" +
                             "Camera/Subj: %.0f/%.0f cm\n" +
                             "heightCm: %.1f cm",
                     verticalCm,
@@ -317,6 +345,7 @@ public class MeasurementActivity extends AppCompatActivity {
                     boardPixelHeight,
                     cmPerPixel,
                     depthFactor,
+                    HEIGHT_CALIBRATION_FACTOR,
                     CAMERA_DISTANCE_CM,
                     SUBJECT_DISTANCE_FROM_BOARD_CM,
                     verticalCm
@@ -371,10 +400,15 @@ public class MeasurementActivity extends AppCompatActivity {
             currentScale = 200.0 / 2322.0;
         }
 
-        // Koreksi kedalaman: subjek berada di depan papan
-        double depthCorrectionFactor = (CAMERA_DISTANCE_CM - SUBJECT_DISTANCE_FROM_BOARD_CM) / CAMERA_DISTANCE_CM;
+        // Koreksi kedalaman: subjek berada di depan papan.
+        double depthCorrectionFactor =
+                (CAMERA_DISTANCE_CM - SUBJECT_DISTANCE_FROM_BOARD_CM) / CAMERA_DISTANCE_CM;
 
-        return heightPx * currentScale * depthCorrectionFactor * HEIGHT_CALIBRATION_FACTOR;
+        // Kalibrasi akhir bersifat perkalian, bukan penambahan cm tetap.
+        return heightPx
+                * currentScale
+                * depthCorrectionFactor
+                * HEIGHT_CALIBRATION_FACTOR;
     }
 
     private BodyMeasurement estimateBodyMeasurement(
