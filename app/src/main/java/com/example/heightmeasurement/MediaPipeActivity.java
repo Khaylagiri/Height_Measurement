@@ -438,6 +438,9 @@ public class MediaPipeActivity extends AppCompatActivity {
         // Bersih: dipakai untuk menghitung ulang landmark/tinggi.
         intent.putExtra("image_path", calibratedImagePath);
 
+        // Kompatibilitas dengan MeasurementActivity versi lama yang membaca image_uri.
+        intent.putExtra("image_uri", Uri.fromFile(cleanFile).toString());
+
         // Overlay: langsung ditampilkan di halaman Measurement.
         intent.putExtra("overlay_path", overlayPath);
 
