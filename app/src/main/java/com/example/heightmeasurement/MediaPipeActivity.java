@@ -31,6 +31,9 @@ import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
@@ -57,6 +60,11 @@ public class MediaPipeActivity extends AppCompatActivity {
     private double boardTopY = -1.0;
     private double boardBottomY = -1.0;
     private double boardPixelHeight = -1.0;
+    private double boardRealHeightCm = -1.0;
+    private double cameraDistanceCm = -1.0;
+    private double subjectDistanceFromBoardCm = -1.0;
+    private int expectedOutputWidthPx = -1;
+    private int expectedOutputHeightPx = -1;
 
     /*
      * Path file PNG hasil perspective.
@@ -191,6 +199,14 @@ public class MediaPipeActivity extends AppCompatActivity {
             boardTopY = sourceIntent.getDoubleExtra("board_top_y", -1.0);
             boardBottomY = sourceIntent.getDoubleExtra("board_bottom_y", -1.0);
             boardPixelHeight = sourceIntent.getDoubleExtra("board_pixel_height", -1.0);
+            boardRealHeightCm = sourceIntent.getDoubleExtra("board_real_height_cm", -1.0);
+            expectedOutputWidthPx = sourceIntent.getIntExtra("output_width_px", -1);
+            expectedOutputHeightPx = sourceIntent.getIntExtra("output_height_px", -1);
+            cameraDistanceCm = sourceIntent.getDoubleExtra("camera_distance_cm", -1.0);
+            subjectDistanceFromBoardCm = sourceIntent.getDoubleExtra(
+                    "subject_distance_from_board_cm",
+                    -1.0
+            );
 
             boolean fromPerspective = imagePath != null && !imagePath.trim().isEmpty();
 
@@ -232,6 +248,30 @@ public class MediaPipeActivity extends AppCompatActivity {
                 currentResultBitmap = null;
                 calibratedFromPerspective = true;
                 calibratedImagePath = imagePath;
+
+                if (!hasValidCalibration()) {
+                    Toast.makeText(
+                            this,
+                            "Data kalibrasi perspective tidak lengkap",
+                            Toast.LENGTH_LONG
+                    ).show();
+                    Log.e(TAG, buildCalibrationDebug());
+                    releaseDisplayedBitmaps();
+                    return;
+                }
+
+                if (!hasExpectedImageSize(selectedBitmap)) {
+                    Toast.makeText(
+                            this,
+                            "Ukuran hasil perspective berubah: "
+                                    + selectedBitmap.getWidth() + "x" + selectedBitmap.getHeight()
+                                    + ", seharusnya "
+                                    + expectedOutputWidthPx + "x" + expectedOutputHeightPx,
+                            Toast.LENGTH_LONG
+                    ).show();
+                    releaseDisplayedBitmaps();
+                    return;
+                }
 
                 imageViewMediaPipe.setImageBitmap(selectedBitmap);
 
@@ -349,7 +389,8 @@ public class MediaPipeActivity extends AppCompatActivity {
     }
 
     /**
-     * Mengirim gambar bersih hasil perspective yang sama ke MeasurementActivity.
+     * Mengirim foto bersih hasil perspective dan foto overlay landmark
+     * ke MeasurementActivity.
      */
     private void openMeasurementActivity() {
         if (currentResultBitmap == null) {
@@ -361,87 +402,150 @@ public class MediaPipeActivity extends AppCompatActivity {
             return;
         }
 
-        if (!calibratedFromPerspective) {
-            Toast.makeText(
-                    this,
-                    "Pengukuran cm hanya boleh dilakukan dari hasil Perspective Correction.",
-                    Toast.LENGTH_LONG
-            ).show();
-            return;
-        }
-
-        if (!hasValidCalibration()) {
+        if (!calibratedFromPerspective || !hasValidCalibration()) {
             Toast.makeText(
                     this,
                     "Data kalibrasi perspective tidak valid",
                     Toast.LENGTH_LONG
             ).show();
+            Log.e(TAG, buildCalibrationDebug());
             return;
         }
 
         if (calibratedImagePath == null || calibratedImagePath.trim().isEmpty()) {
-            Toast.makeText(
-                    this,
-                    "Path bitmap hasil perspective tidak tersedia",
-                    Toast.LENGTH_LONG
-            ).show();
+            Toast.makeText(this, "Path hasil perspective tidak tersedia", Toast.LENGTH_LONG).show();
             return;
         }
 
-        File imageFile = new File(calibratedImagePath);
+        File cleanFile = new File(calibratedImagePath);
+        if (!cleanFile.exists() || !cleanFile.isFile()) {
+            Toast.makeText(this, "File hasil perspective tidak ditemukan", Toast.LENGTH_LONG).show();
+            return;
+        }
 
-        if (!imageFile.exists() || !imageFile.isFile()) {
-            Toast.makeText(
-                    this,
-                    "File hasil perspective tidak ditemukan",
-                    Toast.LENGTH_LONG
-            ).show();
+        String overlayPath = saveBitmapToCache(
+                currentResultBitmap,
+                "MEDIAPIPE_OVERLAY"
+        );
+
+        if (overlayPath == null) {
+            Toast.makeText(this, "Gagal menyiapkan gambar landmark", Toast.LENGTH_LONG).show();
             return;
         }
 
         Intent intent = new Intent(MediaPipeActivity.this, MeasurementActivity.class);
 
-        /*
-         * Kirim image_path untuk MeasurementActivity versi baru.
-         */
+        // Bersih: dipakai untuk menghitung ulang landmark/tinggi.
         intent.putExtra("image_path", calibratedImagePath);
 
-        /*
-         * Kirim image_uri untuk MeasurementActivity versi lama.
-         */
-        intent.putExtra("image_uri", Uri.fromFile(imageFile).toString());
+        // Overlay: langsung ditampilkan di halaman Measurement.
+        intent.putExtra("overlay_path", overlayPath);
 
         intent.putExtra("cm_per_pixel", cmPerPixel);
         intent.putExtra("board_top_y", boardTopY);
         intent.putExtra("board_bottom_y", boardBottomY);
         intent.putExtra("board_pixel_height", boardPixelHeight);
+        intent.putExtra("board_real_height_cm", boardRealHeightCm);
+        intent.putExtra("output_width_px", expectedOutputWidthPx);
+        intent.putExtra("output_height_px", expectedOutputHeightPx);
+        intent.putExtra("camera_distance_cm", cameraDistanceCm);
+        intent.putExtra(
+                "subject_distance_from_board_cm",
+                subjectDistanceFromBoardCm
+        );
 
         startActivity(intent);
     }
 
-    /**
-     * Validasi minimal sesuai data yang sudah dikirim kode perspective lama.
-     */
+    private String saveBitmapToCache(Bitmap bitmap, String prefix) {
+        FileOutputStream outputStream = null;
+
+        try {
+            File directory = new File(getCacheDir(), "measurement_flow");
+            if (!directory.exists() && !directory.mkdirs()) {
+                return null;
+            }
+
+            String timestamp = new SimpleDateFormat(
+                    "yyyyMMdd_HHmmss_SSS",
+                    Locale.US
+            ).format(new Date());
+
+            File outputFile = new File(
+                    directory,
+                    prefix + "_" + timestamp + ".png"
+            );
+
+            outputStream = new FileOutputStream(outputFile);
+            boolean success = bitmap.compress(
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    outputStream
+            );
+            outputStream.flush();
+
+            return success ? outputFile.getAbsolutePath() : null;
+
+        } catch (Exception e) {
+            Log.e(TAG, "saveBitmapToCache error", e);
+            return null;
+
+        } finally {
+            if (outputStream != null) {
+                try {
+                    outputStream.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
     private boolean hasValidCalibration() {
-        if (cmPerPixel <= 0.0) {
+        if (cmPerPixel <= 0.0
+                || boardTopY < 0.0
+                || boardBottomY <= boardTopY
+                || boardPixelHeight <= 0.0
+                || boardRealHeightCm <= 0.0
+                || expectedOutputWidthPx <= 0
+                || expectedOutputHeightPx <= 0
+                || cameraDistanceCm <= 0.0
+                || subjectDistanceFromBoardCm < 0.0
+                || subjectDistanceFromBoardCm >= cameraDistanceCm) {
             return false;
         }
 
-        if (boardTopY < 0.0) {
-            return false;
-        }
+        double boardHeightDifference = Math.abs(
+                boardPixelHeight - (boardBottomY - boardTopY)
+        );
 
-        if (boardBottomY <= boardTopY) {
-            return false;
-        }
+        double reconstructedBoardCm = boardPixelHeight * cmPerPixel;
 
-        if (boardPixelHeight <= 0.0) {
-            return false;
-        }
+        return boardHeightDifference <= 2.0
+                && Math.abs(reconstructedBoardCm - boardRealHeightCm) <= 0.5;
+    }
 
-        double calculatedBoardHeight = boardBottomY - boardTopY;
+    private boolean hasExpectedImageSize(Bitmap bitmap) {
+        return bitmap != null
+                && bitmap.getWidth() == expectedOutputWidthPx
+                && bitmap.getHeight() == expectedOutputHeightPx;
+    }
 
-        return Math.abs(calculatedBoardHeight - boardPixelHeight) <= 2.0;
+    private String buildCalibrationDebug() {
+        return String.format(
+                Locale.US,
+                "CALIBRATION cmPerPixel=%.6f top=%.1f bottom=%.1f "
+                        + "boardPx=%.1f boardCm=%.1f output=%dx%d "
+                        + "camera=%.1f subject=%.1f",
+                cmPerPixel,
+                boardTopY,
+                boardBottomY,
+                boardPixelHeight,
+                boardRealHeightCm,
+                expectedOutputWidthPx,
+                expectedOutputHeightPx,
+                cameraDistanceCm,
+                subjectDistanceFromBoardCm
+        );
     }
 
     private void resetCalibration() {
@@ -449,6 +553,11 @@ public class MediaPipeActivity extends AppCompatActivity {
         boardTopY = -1.0;
         boardBottomY = -1.0;
         boardPixelHeight = -1.0;
+        boardRealHeightCm = -1.0;
+        cameraDistanceCm = -1.0;
+        subjectDistanceFromBoardCm = -1.0;
+        expectedOutputWidthPx = -1;
+        expectedOutputHeightPx = -1;
         calibratedImagePath = null;
         calibratedFromPerspective = false;
     }

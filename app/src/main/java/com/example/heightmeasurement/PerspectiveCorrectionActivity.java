@@ -63,6 +63,14 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private static final double MARKER_SIZE_CELLS = 0.74;
 
+    /*
+     * WAJIB disesuaikan dengan kondisi fisik saat pengambilan foto.
+     * CAMERA_DISTANCE_CM: jarak pusat lensa kamera ke bidang papan.
+     * SUBJECT_DISTANCE_FROM_BOARD_CM: jarak tumit subjek di depan papan.
+     */
+    private static final double CAMERA_DISTANCE_CM = 350.0;
+    private static final double SUBJECT_DISTANCE_FROM_BOARD_CM = 50.0;
+
     private static final int RESULT_SHIFT_X_PX = -100;
 
     private static final int CROP_WHITE_THRESHOLD = 245;
@@ -204,38 +212,82 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private void openMediaPipeWithPerspectiveResult() {
         if (!perspectiveSuccess || currentBitmap == null) {
-            Toast.makeText(this, "Jalankan perspective sampai berhasil dulu", Toast.LENGTH_LONG).show();
+            Toast.makeText(
+                    this,
+                    "Jalankan perspective sampai berhasil dulu",
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
 
         String imagePath = saveBitmapToCacheForMediaPipe(currentBitmap);
 
-        if (imagePath == null) {
-            Toast.makeText(this, "Gagal menyiapkan gambar untuk MediaPipe", Toast.LENGTH_LONG).show();
+        if (imagePath == null || imagePath.trim().isEmpty()) {
+            Toast.makeText(
+                    this,
+                    "Gagal menyiapkan gambar untuk MediaPipe",
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
 
-        Intent intent = new Intent(PerspectiveCorrectionActivity.this, MediaPipeActivity.class);
-        intent.putExtra("image_path", imagePath);
-
-        // Hitung cm_per_pixel dan data board secara eksplisit berdasarkan acuan board 200 cm
+        /*
+         * Skala vertikal tetap mengikuti papan 200 cm.
+         * Crop yang ada di kode perspective hanya horizontal,
+         * jadi boardTopY dan boardBottomY tetap sah.
+         */
         double boardTopY = TOP_MARGIN_CELLS * PX_PER_CELL;
-        double boardBottomY = (TOP_MARGIN_CELLS + BOTTOM_BOARD_OFFSET_Y + BOTTOM_BOARD_ROWS) * PX_PER_CELL;
-        double boardPixelHeight = boardBottomY - boardTopY;
+        double boardPixelHeight = BOARD_HEIGHT_CELLS * PX_PER_CELL;
+        double boardBottomY = boardTopY + boardPixelHeight;
         double cmPerPixel = BOARD_REAL_HEIGHT_CM / boardPixelHeight;
 
+        Intent intent = new Intent(
+                PerspectiveCorrectionActivity.this,
+                MediaPipeActivity.class
+        );
+
+        // File PNG hasil perspective, bukan foto asli.
+        intent.putExtra("image_path", imagePath);
+
+        // Data kalibrasi papan.
         intent.putExtra("board_top_y", boardTopY);
         intent.putExtra("board_bottom_y", boardBottomY);
         intent.putExtra("board_pixel_height", boardPixelHeight);
         intent.putExtra("cm_per_pixel", cmPerPixel);
+        intent.putExtra("board_real_height_cm", BOARD_REAL_HEIGHT_CM);
 
-        /*
-         * false artinya:
-         * gambar hasil perspective langsung tampil di MediaPipe,
-         * tapi MediaPipe belum otomatis proses.
-         * Jadi user tinggal klik tombol Proses MediaPipe.
-         */
+        // Kirim ukuran AKTUAL karena kode perspective masih melakukan crop horizontal.
+        intent.putExtra("output_width_px", currentBitmap.getWidth());
+        intent.putExtra("output_height_px", currentBitmap.getHeight());
+
+        // Data koreksi kedalaman.
+        intent.putExtra("camera_distance_cm", CAMERA_DISTANCE_CM);
+        intent.putExtra(
+                "subject_distance_from_board_cm",
+                SUBJECT_DISTANCE_FROM_BOARD_CM
+        );
+
+        // false: gambar tampil dulu, lalu pengguna menekan Proses MediaPipe.
         intent.putExtra("auto_process", false);
+
+        Log.i(
+                TAG,
+                String.format(
+                        Locale.US,
+                        "SEND_TO_MEDIAPIPE path=%s size=%dx%d cmPerPixel=%.6f "
+                                + "boardTop=%.1f boardBottom=%.1f boardHeight=%.1f "
+                                + "camera=%.1f subject=%.1f",
+                        imagePath,
+                        currentBitmap.getWidth(),
+                        currentBitmap.getHeight(),
+                        cmPerPixel,
+                        boardTopY,
+                        boardBottomY,
+                        boardPixelHeight,
+                        CAMERA_DISTANCE_CM,
+                        SUBJECT_DISTANCE_FROM_BOARD_CM
+                )
+        );
 
         startActivity(intent);
     }
