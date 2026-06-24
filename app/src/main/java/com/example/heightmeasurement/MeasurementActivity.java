@@ -87,7 +87,7 @@ public class MeasurementActivity extends AppCompatActivity {
      * Kalibrasi akhir tambahan (setelah depth correction).
      * Biarkan 1.0 dulu. Hanya untuk koreksi kecil residual.
      */
-    private static final double HEIGHT_CALIBRATION_FACTOR = 1.0182;
+    private static final double HEIGHT_CALIBRATION_FACTOR = 1.0;
 
     private ImageView imageViewMeasurement;
     private TextView tvMeasurementResult;
@@ -140,48 +140,23 @@ public class MeasurementActivity extends AppCompatActivity {
             cmPerPixel = 200.0 / boardPixelHeight;
         }
 
-        String imagePath = getIntent().getStringExtra("image_path");
-        String overlayPath = getIntent().getStringExtra("overlay_path");
         String uriString = getIntent().getStringExtra("image_uri");
 
-        /*
-         * Gambar bersih hasil perspective dipakai untuk perhitungan tinggi.
-         * Urutan prioritas:
-         * 1. image_path dari MediaPipeActivity
-         * 2. image_uri untuk kompatibilitas alur lama
-         */
-        if (imagePath != null && !imagePath.trim().isEmpty()) {
-            originalBitmap = loadBitmapFromPath(imagePath);
-        } else if (uriString != null && !uriString.trim().isEmpty()) {
-            originalBitmap = loadAndRotateBitmap(Uri.parse(uriString));
-        }
-
-        if (originalBitmap == null) {
-            Toast.makeText(
-                    this,
-                    "Gambar hasil perspective tidak ditemukan atau gagal dibuka",
-                    Toast.LENGTH_LONG
-            ).show();
+        if (uriString == null || uriString.trim().isEmpty()) {
+            Toast.makeText(this, "Gambar tidak ditemukan", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
 
-        /*
-         * Jika MediaPipe mengirim overlay landmark, tampilkan overlay tersebut.
-         * Perhitungan tetap menggunakan originalBitmap yang bersih, sehingga
-         * rumus dan kode perhitungan tinggi tidak berubah.
-         */
-        Bitmap overlayBitmap = null;
-        if (overlayPath != null && !overlayPath.trim().isEmpty()) {
-            overlayBitmap = loadBitmapFromPath(overlayPath);
+        originalBitmap = loadAndRotateBitmap(Uri.parse(uriString));
+
+        if (originalBitmap == null) {
+            Toast.makeText(this, "Gagal membuka gambar", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
         }
 
-        if (overlayBitmap != null) {
-            currentBitmap = overlayBitmap;
-        } else {
-            currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
-        }
-
+        currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true);
         imageViewMeasurement.setImageBitmap(currentBitmap);
 
         tvMeasurementResult.setText("Siap menghitung tinggi badan");
@@ -1141,35 +1116,6 @@ public class MeasurementActivity extends AppCompatActivity {
 
     private int clampInt(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
-    }
-
-    private Bitmap loadBitmapFromPath(String imagePath) {
-        if (imagePath == null || imagePath.trim().isEmpty()) {
-            return null;
-        }
-
-        try {
-            File imageFile = new File(imagePath);
-
-            if (!imageFile.exists() || !imageFile.isFile()) {
-                Log.e(TAG, "File gambar tidak ditemukan: " + imagePath);
-                return null;
-            }
-
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            options.inSampleSize = 1;
-
-            return BitmapFactory.decodeFile(imagePath, options);
-
-        } catch (OutOfMemoryError error) {
-            Log.e(TAG, "Memori tidak cukup membuka file gambar", error);
-            return null;
-
-        } catch (Exception e) {
-            Log.e(TAG, "loadBitmapFromPath error", e);
-            return null;
-        }
     }
 
     private Bitmap loadAndRotateBitmap(Uri imageUri) {
