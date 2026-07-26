@@ -21,15 +21,6 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout btnMeasurement;
     private LinearLayout btnFile;
 
-    private final ActivityResultLauncher<String> perspectiveLauncher =
-            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
-                if (uri != null) {
-                    openPerspective(uri);
-                } else {
-                    Toast.makeText(this, "Tidak ada gambar dipilih", Toast.LENGTH_SHORT).show();
-                }
-            });
-
     private final ActivityResultLauncher<String> measurementLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) {
@@ -61,7 +52,7 @@ public class MainActivity extends AppCompatActivity {
         btnMeasurement = findViewById(R.id.btnMeasurement);
         btnFile = findViewById(R.id.btnFile);
 
-        btnPerspective.setOnClickListener(view -> openPerspectivePicker());
+        btnPerspective.setOnClickListener(view -> openPerspectiveSourceMenu());
 
         btnMediaPipe.setOnClickListener(view -> openMediaPipe());
 
@@ -70,18 +61,13 @@ public class MainActivity extends AppCompatActivity {
         btnFile.setOnClickListener(view -> openFileList());
     }
 
-    private void openPerspectivePicker() {
-        perspectiveLauncher.launch("image/*");
+    private void openPerspectiveSourceMenu() {
+        Intent intent = new Intent(MainActivity.this, PerspectiveSourceActivity.class);
+        startActivity(intent);
     }
 
     private void openMeasurementPicker() {
         measurementLauncher.launch("image/*");
-    }
-
-    private void openPerspective(Uri uri) {
-        Intent intent = new Intent(MainActivity.this, PerspectiveCorrectionActivity.class);
-        intent.putExtra("image_uri", uri.toString());
-        startActivity(intent);
     }
 
     private void openMediaPipe() {

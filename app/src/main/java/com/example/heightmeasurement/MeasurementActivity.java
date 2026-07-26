@@ -69,10 +69,10 @@ public class MeasurementActivity extends AppCompatActivity {
      * Rumus fisika:
      * tinggi_sebenarnya = tinggi_terukur × (jarak_kamera - jarak_subjek) / jarak_kamera
      *
-     * Contoh kasus kamu:
+     * Contoh kasus dari kode lampiran:
      * - Kamera 350 cm dari board, subjek 50 cm di depan board
      * - Faktor = (350 - 50) / 350 = 0.857
-     * - Tinggi terukur 186.1 cm × 0.857 = 159.5 cm ← mendekati 160 cm!
+     * - Tinggi terukur 186.1 cm × 0.857 = 159.5 cm.
      *
      * CARA KALIBRASI:
      * 1. Ukur jarak kamera ke board (dalam cm) → isi CAMERA_DISTANCE_CM
@@ -84,14 +84,8 @@ public class MeasurementActivity extends AppCompatActivity {
     private static final double SUBJECT_DISTANCE_FROM_BOARD_CM = 50.0;
 
     /*
-     * Kalibrasi akhir berdasarkan pengujian aplikasi yang sebelumnya membaca
-     * sekitar 4 cm lebih pendek pada tinggi kurang lebih 160 cm.
-     *
-     * Rumus kalibrasi yang benar adalah proporsional:
-     * faktor = tinggi_manual / tinggi_aplikasi_sebelum_kalibrasi
-     *
-     * Contoh 160 / 156 = 1.02564, dibulatkan menjadi 1.025.
-     * Jangan menambahkan +4 cm secara langsung karena error harus mengikuti skala.
+     * Kalibrasi akhir dari kode lampiran.
+     * Faktor harus divalidasi ulang jika jarak atau board berubah.
      */
     private static final double HEIGHT_CALIBRATION_FACTOR = 1.025;
 
@@ -140,7 +134,7 @@ public class MeasurementActivity extends AppCompatActivity {
         boardPixelHeight = getIntent().getDoubleExtra("board_pixel_height", -1.0);
 
         if (cmPerPixel <= 0.0) {
-            // Fallback default: board 200 cm, 19.35 cells, 120 px/cell
+            // Fallback dari kode lampiran: board 200 cm, 19,35 sel, 120 px/sel.
             boardTopY = 0.35 * 120.0;
             boardBottomY = (0.35 + 11.35 + 8.0) * 120.0;
             boardPixelHeight = boardBottomY - boardTopY;
@@ -301,10 +295,6 @@ public class MeasurementActivity extends AppCompatActivity {
 
             double verticalCm = pixelToCm(measurement.verticalHeightPx);
             double skeletonCm = pixelToCm(measurement.totalSkeletonPx);
-            double contourCm = contourResult.valid
-                    ? pixelToCm(contourResult.heightPx)
-                    : 0.0;
-
             currentBitmap = drawFinalMeasurement(
                     workingBitmap,
                     landmarks,
@@ -313,7 +303,6 @@ public class MeasurementActivity extends AppCompatActivity {
                     validation,
                     verticalCm,
                     skeletonCm,
-                    contourCm,
                     imageHeightPx
             );
 
@@ -393,7 +382,7 @@ public class MeasurementActivity extends AppCompatActivity {
     private double pixelToCm(double heightPx) {
         /*
          * Menggunakan cm_per_pixel yang dikirim via Intent dari Perspective Correction.
-         * Jika tidak ada, gunakan hitungan fallback default dari grid 19.35 sel.
+         * Jika tidak ada, gunakan fallback grid 19,35 sel dari kode lampiran.
          */
         double currentScale = this.cmPerPixel;
         if (currentScale <= 0.0) {
@@ -561,7 +550,8 @@ public class MeasurementActivity extends AppCompatActivity {
          */
         double eyeToShoulder = distance(eyeMid, shoulderMid);
         double earToEye = distance(earMid, eyeMid);
-        double correction = eyeToShoulder * 0.28 + earToEye * 0.15;
+        // Kombinasi terpilih sementara dari MAE pengujian keempat: 0,35 dan 0,10.
+        double correction = eyeToShoulder * 0.35 + earToEye * 0.10;
 
         return new Point(
                 faceCenter.x + dirX * correction,
@@ -761,8 +751,12 @@ public class MeasurementActivity extends AppCompatActivity {
                 gray = src.clone();
             }
 
+            // Konfigurasi visual final: Gaussian 5 x 5, Canny 60/180,
+            // dan dilasi 7 x 7.
+            // Kontur hanya menjadi visualisasi pendukung dan tidak digunakan
+            // dalam perhitungan tinggi badan.
             Imgproc.GaussianBlur(gray, blur, new Size(5, 5), 0);
-            Imgproc.Canny(blur, edges, 45, 140);
+            Imgproc.Canny(blur, edges, 60, 180);
 
             Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(7, 7));
             Imgproc.dilate(edges, dilated, kernel);
@@ -816,12 +810,10 @@ public class MeasurementActivity extends AppCompatActivity {
                 result.valid = true;
                 result.contour = new MatOfPoint(bestContour.toArray());
                 result.bodyRect = bestRect;
-                result.heightPx = bestRect.height;
             } else {
                 result.valid = false;
                 result.contour = null;
                 result.bodyRect = poseRect;
-                result.heightPx = poseRect.height;
             }
 
             return result;
@@ -838,8 +830,6 @@ public class MeasurementActivity extends AppCompatActivity {
                     bitmap.getHeight(),
                     80
             );
-            result.heightPx = result.bodyRect.height;
-
             return result;
 
         } finally {
@@ -914,7 +904,6 @@ public class MeasurementActivity extends AppCompatActivity {
             PoseValidation validation,
             double heightCm,
             double skeletonCm,
-            double contourCm,
             int imageHeightPx
     ) {
         Mat mat = new Mat();
@@ -1251,7 +1240,6 @@ public class MeasurementActivity extends AppCompatActivity {
         boolean valid = false;
         MatOfPoint contour = null;
         Rect bodyRect = null;
-        double heightPx = 0.0;
     }
 
     private static class PoseValidation {

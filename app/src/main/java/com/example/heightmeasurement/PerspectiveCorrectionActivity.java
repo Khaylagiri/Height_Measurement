@@ -51,6 +51,7 @@ public class PerspectiveCorrectionActivity extends AppCompatActivity {
 
     private static final int MARKER_DICT = Objdetect.DICT_6X6_1000;
 
+    // Pengujian koefisien kepala tahap 1 menggunakan skala terbaik dari uji piksel.
     private static final double PX_PER_CELL = 120.0;
 
     private static final double BOARD_COLS = 11.0;

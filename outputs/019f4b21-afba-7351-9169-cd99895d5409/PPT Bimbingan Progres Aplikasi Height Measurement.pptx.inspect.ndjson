@@ -1,0 +1,219 @@
+{"kind":"deck","id":"pr/868i0q","name":"Deck"}
+{"kind":"layout","layoutId":"c823e1ba-5418-4aae-864d-d42204a44ed0","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"753a1094-c388-497c-994a-efafa56579fe","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/t5er44","slide":1,"title":"HEIGHT MEASUREMENT","textShapes":6}
+{"kind":"textbox","id":"sh/y9kzq5gz","slide":1,"text":"HEIGHT MEASUREMENT","textPreview":"HEIGHT MEASUREMENT","textChars":18,"textLines":1,"bbox":[70,92,720,72]}
+{"kind":"textbox","id":"sh/5cvil0zq","slide":1,"text":"Progres aplikasi, hasil pengujian, dan alasan pemilihan metode","textPreview":"Progres aplikasi, hasil pengujian, dan alasan pemilihan metode","textChars":62,"textLines":1,"bbox":[72,180,720,70]}
+{"kind":"textbox","id":"sh/kbm1svy5","slide":1,"text":"Bimbingan teknis • Android • OpenCV • MediaPipe","textPreview":"Bimbingan teknis • Android • OpenCV • MediaPipe","textChars":47,"textLines":1,"bbox":[72,594,650,28]}
+{"kind":"shape","id":"sh/7ed0nahw","slide":1,"bbox":[875,95,300,445]}
+{"kind":"textbox","id":"sh/6d4ju5gb","slide":1,"text":"Fokus utama","textPreview":"Fokus utama","textChars":11,"textLines":1,"bbox":[915,135,220,35]}
+{"kind":"textbox","id":"sh/t0vipkzm","slide":1,"text":"1. Proses aplikasi\n2. PX 120\n3. Estimasi headTop\n4. Pemilihan footBottom\n5. Perhitungan tinggi\n6. Progres & pekerjaan berikutnya","textPreview":"1. Proses aplikasi | 2. PX 120 | 3. Estimasi headTop | 4. Pemilihan footBottom | 5. Perhitungan tinggi | 6. Progres & pekerjaan berikutnya","textChars":128,"textLines":6,"bbox":[915,190,220,270]}
+{"kind":"textbox","id":"sh/sfm1wfyh","slide":1,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/t5er44","slide":1,"text":""}
+{"kind":"slide","id":"sl/plzlr1","slide":2,"title":"PROGRES APLIKASI","textShapes":11}
+{"kind":"textbox","id":"sh/76t07epw","slide":2,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/87mh0jqh","slide":2,"text":"Aplikasi sudah berjalan dari foto sampai hasil tinggi","textPreview":"Aplikasi sudah berjalan dari foto sampai hasil tinggi","textChars":53,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/t8vi9o72","slide":2,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/yhkzu98f","slide":2,"bbox":[64,170,350,190]}
+{"kind":"shape","id":"sh/jitg3ep0","slide":2,"bbox":[64,170,8,190]}
+{"kind":"textbox","id":"sh/kj2hwjq5","slide":2,"text":"SUDAH BERFUNGSI","textPreview":"SUDAH BERFUNGSI","textChars":15,"textLines":1,"bbox":[90,188,306,30]}
+{"kind":"textbox","id":"sh/lkby5o7q","slide":2,"text":"Foto dapat dipilih, dinormalkan orientasinya, dikoreksi perspektif, dan diproses sampai hasil sentimeter.","textPreview":"Foto dapat dipilih, dinormalkan orientasinya, dikoreksi perspektif, dan diproses sampai hasil sentimeter.","textChars":105,"textLines":1,"bbox":[90,224,306,124]}
+{"kind":"shape","id":"sh/ad0zq983","slide":2,"bbox":[465,170,350,190]}
+{"kind":"shape","id":"sh/be9gzu9o","slide":2,"bbox":[465,170,8,190]}
+{"kind":"textbox","id":"sh/jqd8765s","slide":2,"text":"SUDAH DIUJI","textPreview":"SUDAH DIUJI","textChars":11,"textLines":1,"bbox":[491,188,306,30]}
+{"kind":"textbox","id":"sh/yp4ry1o7","slide":2,"text":"Ukuran board, skala piksel 100/120/150, serta 9 kombinasi estimasi kepala pada 15 foto.","textPreview":"Ukuran board, skala piksel 100/120/150, serta 9 kombinasi estimasi kepala pada 15 foto.","textChars":87,"textLines":1,"bbox":[491,224,306,124]}
+{"kind":"shape","id":"sh/lsfq9gny","slide":2,"bbox":[866,170,350,190]}
+{"kind":"shape","id":"sh/krm90b6d","slide":2,"bbox":[866,170,8,190]}
+{"kind":"textbox","id":"sh/7ux8b654","slide":2,"text":"BELUM FINAL","textPreview":"BELUM FINAL","textChars":11,"textLines":1,"bbox":[892,188,306,30]}
+{"kind":"textbox","id":"sh/6tor2loj","slide":2,"text":"Koefisien kepala terbaik, faktor kalibrasi, parameter kontur, validasi pose, dan pengujian akhir.","textPreview":"Koefisien kepala terbaik, faktor kalibrasi, parameter kontur, validasi pose, dan pengujian akhir.","textChars":97,"textLines":1,"bbox":[892,224,306,124]}
+{"kind":"textbox","id":"sh/twfqdgnu","slide":2,"text":"Kesimpulan progres","textPreview":"Kesimpulan progres","textChars":18,"textLines":1,"bbox":[64,410,300,30]}
+{"kind":"textbox","id":"sh/8v694b6p","slide":2,"text":"Sistem utama selesai. Tahap sekarang adalah memilih parameter berdasarkan galat terukur—bukan berdasarkan satu hasil tinggi yang terlihat paling bagus.","textPreview":"Sistem utama selesai. Tahap sekarang adalah memilih parameter berdasarkan galat terukur—bukan berdasarkan satu hasil tinggi yang terlihat...","textChars":151,"textLines":1,"bbox":[64,455,1100,90]}
+{"kind":"textbox","id":"sh/nyt8zm5k","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/plzlr1","slide":2,"text":""}
+{"kind":"slide","id":"sl/2ygwh5","slide":3,"title":"PROGRES APLIKASI","textShapes":24}
+{"kind":"textbox","id":"sh/q1cjm1wz","slide":3,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/donixgva","slide":3,"text":"Setiap tahap mengurangi sumber kesalahan yang berbeda","textPreview":"Setiap tahap mengurangi sumber kesalahan yang berbeda","textChars":53,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/s3e1obe5","slide":3,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/3yl0r6d8","slide":3,"bbox":[58,250,145,105]}
+{"kind":"textbox","id":"sh/ixcji1wn","slide":3,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[70,264,24,24]}
+{"kind":"textbox","id":"sh/503itgve","slide":3,"text":"Input & EXIF","textPreview":"Input & EXIF","textChars":12,"textLines":1,"bbox":[70,296,120,45]}
+{"kind":"textbox","id":"sh/4zu1kbet","slide":3,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[206,282,24,35]}
+{"kind":"shape","id":"sh/vu10nmdc","slide":3,"bbox":[232,250,145,105]}
+{"kind":"textbox","id":"sh/utsjehwr","slide":3,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[244,264,24,24]}
+{"kind":"textbox","id":"sh/0jmpsz69","slide":3,"text":"Deteksi ArUco","textPreview":"Deteksi ArUco","textChars":13,"textLines":1,"bbox":[244,296,120,45]}
+{"kind":"textbox","id":"sh/14v6lk7u","slide":3,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[380,282,24,35]}
+{"kind":"shape","id":"sh/ehk7qpo3","slide":3,"bbox":[406,250,145,105]}
+{"kind":"textbox","id":"sh/fitojupo","slide":3,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[418,264,24,24]}
+{"kind":"textbox","id":"sh/sf2pofqx","slide":3,"text":"Perspective warp","textPreview":"Perspective warp","textChars":16,"textLines":1,"bbox":[418,296,120,45]}
+{"kind":"textbox","id":"sh/dgb6hk7i","slide":3,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[554,282,24,35]}
+{"kind":"shape","id":"sh/qdk7m587","slide":3,"bbox":[580,250,145,105]}
+{"kind":"textbox","id":"sh/retofaps","slide":3,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[592,264,24,24]}
+{"kind":"textbox","id":"sh/wb6p0j6h","slide":3,"text":"MediaPipe Pose","textPreview":"MediaPipe Pose","textChars":14,"textLines":1,"bbox":[592,296,120,45]}
+{"kind":"textbox","id":"sh/xcfqt472","slide":3,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[728,282,24,35]}
+{"kind":"shape","id":"sh/5sb6d4z6","slide":3,"bbox":[754,250,145,105]}
+{"kind":"textbox","id":"sh/kr2p4zyl","slide":3,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[766,264,24,24]}
+{"kind":"textbox","id":"sh/jqtobeh0","slide":3,"text":"headTop + footBottom","textPreview":"headTop + footBottom","textChars":20,"textLines":1,"bbox":[766,296,120,45]}
+{"kind":"textbox","id":"sh/ipk729gf","slide":3,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[902,282,24,35]}
+{"kind":"shape","id":"sh/xor694zu","slide":3,"bbox":[928,250,145,105]}
+{"kind":"textbox","id":"sh/w3ip0zy9","slide":3,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[940,264,24,24]}
+{"kind":"textbox","id":"sh/v29o7uh4","slide":3,"text":"Piksel → cm","textPreview":"Piksel → cm","textChars":11,"textLines":1,"bbox":[940,296,120,45]}
+{"kind":"textbox","id":"sh/a107ypgj","slide":3,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[1076,282,24,35]}
+{"kind":"shape","id":"sh/90r65kzy","slide":3,"bbox":[1102,250,145,105]}
+{"kind":"textbox","id":"sh/ozi5wfyd","slide":3,"text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[1114,264,24,24]}
+{"kind":"textbox","id":"sh/etwvq1sz","slide":3,"text":"Validasi hasil","textPreview":"Validasi hasil","textChars":14,"textLines":1,"bbox":[1114,296,120,45]}
+{"kind":"textbox","id":"sh/fu5cj6tk","slide":3,"text":"File cache dan Intent meneruskan citra serta nilai cmPerPixel antartahap.","textPreview":"File cache dan Intent meneruskan citra serta nilai cmPerPixel antartahap.","textChars":73,"textLines":1,"bbox":[180,430,920,56]}
+{"kind":"textbox","id":"sh/0vedsra5","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/2ygwh5","slide":3,"text":""}
+{"kind":"slide","id":"sl/1j7lsv","slide":4,"title":"PROGRES APLIKASI","textShapes":9}
+{"kind":"textbox","id":"sh/xsbm1k7m","slide":4,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/ap03q5ov","slide":4,"text":"Board 200 cm menjadi referensi fisik untuk semua perhitungan","textPreview":"Board 200 cm menjadi referensi fisik untuk semua perhitungan","textChars":60,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/bq94zapg","slide":4,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/kv2lwf6d","slide":4,"bbox":[64,170,530,200]}
+{"kind":"shape","id":"sh/lwbm5k7i","slide":4,"bbox":[64,170,8,200]}
+{"kind":"textbox","id":"sh/ytk3upo7","slide":4,"text":"KENAPA MEMAKAI BOARD?","textPreview":"KENAPA MEMAKAI BOARD?","textChars":21,"textLines":1,"bbox":[90,188,486,30]}
+{"kind":"textbox","id":"sh/zut43aps","slide":4,"text":"Foto hanya menyediakan piksel. Board yang ukurannya diketahui menghubungkan koordinat gambar dengan satuan sentimeter.","textPreview":"Foto hanya menyediakan piksel. Board yang ukurannya diketahui menghubungkan koordinat gambar dengan satuan sentimeter.","textChars":118,"textLines":1,"bbox":[90,224,486,134]}
+{"kind":"shape","id":"sh/0zylkv6t","slide":4,"bbox":[640,170,576,200]}
+{"kind":"shape","id":"sh/1072t07e","slide":4,"bbox":[640,170,8,200]}
+{"kind":"textbox","id":"sh/5kfe1k7e","slide":4,"text":"KONVERSI SKALA","textPreview":"KONVERSI SKALA","textChars":14,"textLines":1,"bbox":[666,188,532,30]}
+{"kind":"textbox","id":"sh/kj6dsfqt","slide":4,"text":"cmPerPixel = tinggi board nyata ÷ tinggi board hasil warp\n\n200 ÷ 2322 = 0,08613 cm/piksel","textPreview":"cmPerPixel = tinggi board nyata ÷ tinggi board hasil warp |  | 200 ÷ 2322 = 0,08613 cm/piksel","textChars":89,"textLines":3,"bbox":[666,224,532,134]}
+{"kind":"textbox","id":"sh/jixczapo","slide":4,"text":"Parameter geometri harus diukur secara fisik","textPreview":"Parameter geometri harus diukur secara fisik","textChars":44,"textLines":1,"bbox":[64,430,520,32]}
+{"kind":"textbox","id":"sh/ihovq583","slide":4,"text":"Lebar board, tinggi bagian atas/bawah, gap tengah, jarak ke lantai, serta ukuran marker tidak boleh dipilih karena membuat hasil tinggi lebih dekat.","textPreview":"Lebar board, tinggi bagian atas/bawah, gap tengah, jarak ke lantai, serta ukuran marker tidak boleh dipilih karena membuat hasil tinggi l...","textChars":148,"textLines":1,"bbox":[64,476,1120,80]}
+{"kind":"textbox","id":"sh/t8ze547q","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/1j7lsv","slide":4,"text":""}
+{"kind":"slide","id":"sl/g20ea6","slide":5,"title":"PROGRES APLIKASI","textShapes":7}
+{"kind":"textbox","id":"sh/hwr2l8ry","slide":5,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/u9g3ads7","slide":5,"text":"PX 120 dipilih karena MAE-nya paling kecil","textPreview":"PX 120 dipilih karena MAE-nya paling kecil","textChars":42,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/vupkjy9s","slide":5,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/9872h8rm","slide":5,"bbox":[825,200,360,205]}
+{"kind":"shape","id":"sh/m5g36tsb","slide":5,"bbox":[825,200,8,205]}
+{"kind":"textbox","id":"sh/76pkfy9w","slide":5,"text":"HASIL PENGUJIAN","textPreview":"HASIL PENGUJIAN","textChars":15,"textLines":1,"bbox":[851,218,316,30]}
+{"kind":"textbox","id":"sh/k3e14ja5","slide":5,"text":"PX 120 menghasilkan MAE ≈ 1,87 cm, lebih kecil daripada PX 100 (2,33 cm) dan PX 150 (2,47 cm).","textPreview":"PX 120 menghasilkan MAE ≈ 1,87 cm, lebih kecil daripada PX 100 (2,33 cm) dan PX 150 (2,47 cm).","textChars":94,"textLines":1,"bbox":[851,254,316,139]}
+{"kind":"textbox","id":"sh/l472dorq","slide":5,"text":"Alasan memakai 120","textPreview":"Alasan memakai 120","textChars":18,"textLines":1,"bbox":[825,445,340,28]}
+{"kind":"textbox","id":"sh/tkneh0z6","slide":5,"text":"Dipilih dari data perbandingan yang sama, bukan karena angka 120 dianggap standar OpenCV.","textPreview":"Dipilih dari data perbandingan yang sama, bukan karena angka 120 dianggap standar OpenCV.","textChars":89,"textLines":1,"bbox":[825,480,340,85]}
+{"kind":"textbox","id":"sh/sjexovyl","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"chart","id":"ch/ori9g3ml","slide":5,"name":"","chartType":"bar","bbox":[80,175,690,390]}
+{"kind":"notes","id":"nt/g20ea6","slide":5,"text":""}
+{"kind":"slide","id":"sl/c8b804","slide":6,"title":"PROGRES APLIKASI","textShapes":9}
+{"kind":"textbox","id":"sh/x0j6xwb2","slide":6,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/ad8nmhcb","slide":6,"text":"MediaPipe tidak menyediakan titik puncak kepala secara langsung","textPreview":"MediaPipe tidak menyediakan titik puncak kepala secara langsung","textChars":63,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/be1ovmtw","slide":6,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/k3apsbad","slide":6,"bbox":[64,170,540,245]}
+{"kind":"shape","id":"sh/l4j61gby","slide":6,"bbox":[64,170,8,245]}
+{"kind":"textbox","id":"sh/y1s7q1c7","slide":6,"text":"LANDMARK YANG TERSEDIA","textPreview":"LANDMARK YANG TERSEDIA","textChars":22,"textLines":1,"bbox":[90,188,496,30]}
+{"kind":"textbox","id":"sh/j21oz6ts","slide":6,"text":"Hidung, mata, telinga, bahu, pinggul, lutut, ankle, heel, dan foot index. Tidak ada landmark tepat pada rambut/puncak kepala.","textPreview":"Hidung, mata, telinga, bahu, pinggul, lutut, ankle, heel, dan foot index. Tidak ada landmark tepat pada rambut/puncak kepala.","textChars":125,"textLines":1,"bbox":[90,224,496,179]}
+{"kind":"shape","id":"sh/07q5g7u9","slide":6,"bbox":[640,170,576,245]}
+{"kind":"shape","id":"sh/18z6pcbu","slide":6,"bbox":[640,170,8,245]}
+{"kind":"textbox","id":"sh/54fe58bq","slide":6,"text":"SOLUSI APLIKASI","textPreview":"SOLUSI APLIKASI","textChars":15,"textLines":1,"bbox":[666,188,532,30]}
+{"kind":"textbox","id":"sh/k36xwnu5","slide":6,"text":"faceCenter = midpoint(hidung, eyeMid)\nArah kepala = faceCenter − shoulderMid\nKoreksi = eyeToShoulder × a + earToEye × b\nheadTop = faceCenter + arah × koreksi","textPreview":"faceCenter = midpoint(hidung, eyeMid) | Arah kepala = faceCenter − shoulderMid | Koreksi = eyeToShoulder × a + earToEye × b | headTop = f...","textChars":157,"textLines":4,"bbox":[666,224,532,179]}
+{"kind":"textbox","id":"sh/j2xw3idk","slide":6,"text":"Makna headTop","textPreview":"Makna headTop","textChars":13,"textLines":1,"bbox":[64,470,250,28]}
+{"kind":"textbox","id":"sh/i1ofudcz","slide":6,"text":"Titik estimasi puncak kepala anatomi yang digunakan sebagai batas atas tinggi piksel. Karena merupakan estimasi, koefisien a dan b harus diuji.","textPreview":"Titik estimasi puncak kepala anatomi yang digunakan sebagai batas atas tinggi piksel. Karena merupakan estimasi, koefisien a dan b harus ...","textChars":143,"textLines":1,"bbox":[64,510,1120,78]}
+{"kind":"textbox","id":"sh/tszy9sbm","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/c8b804","slide":6,"text":""}
+{"kind":"slide","id":"sl/wr17em","slide":7,"title":"PROGRES APLIKASI","textShapes":14}
+{"kind":"textbox","id":"sh/7m5wrehc","slide":7,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/8nexkjyx","slide":7,"text":"Sembilan kombinasi kepala diuji pada foto yang sama","textPreview":"Sembilan kombinasi kepala diuji pada foto yang sama","textChars":51,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/tonetozi","slide":7,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/yxcfe9gv","slide":7,"bbox":[90,175,330,82]}
+{"kind":"textbox","id":"sh/jylwneh0","slide":7,"text":"0,20 / 0,10","textPreview":"0,20 / 0,10","textChars":11,"textLines":1,"bbox":[105,192,300,45]}
+{"kind":"shape","id":"sh/kzuxgjyl","slide":7,"bbox":[475,175,330,82]}
+{"kind":"textbox","id":"sh/l03epoz6","slide":7,"text":"0,20 / 0,15","textPreview":"0,20 / 0,15","textChars":11,"textLines":1,"bbox":[490,192,300,45]}
+{"kind":"shape","id":"sh/atsva9gj","slide":7,"bbox":[860,175,330,82]}
+{"kind":"textbox","id":"sh/bu1wjuh4","slide":7,"text":"0,20 / 0,20","textPreview":"0,20 / 0,20","textChars":11,"textLines":1,"bbox":[875,192,300,45]}
+{"kind":"shape","id":"sh/fyp8729k","slide":7,"bbox":[90,295,330,82]}
+{"kind":"textbox","id":"sh/uxg7exsf","slide":7,"text":"0,28 / 0,10","textPreview":"0,28 / 0,10","textChars":11,"textLines":1,"bbox":[105,312,300,45]}
+{"kind":"shape","id":"sh/h0rq9crq","slide":7,"bbox":[475,295,330,82]}
+{"kind":"textbox","id":"sh/gzipg7a5","slide":7,"text":"0,28 / 0,15","textPreview":"0,28 / 0,15","textChars":11,"textLines":1,"bbox":[490,312,300,45]}
+{"kind":"shape","id":"sh/3298b29w","slide":7,"bbox":[860,295,330,82]}
+{"kind":"textbox","id":"sh/2107ihsb","slide":7,"text":"0,28 / 0,20","textPreview":"0,28 / 0,20","textChars":11,"textLines":1,"bbox":[875,312,300,45]}
+{"kind":"shape","id":"sh/p4rqdcr2","slide":7,"bbox":[90,415,330,82]}
+{"kind":"textbox","id":"sh/43ipk7ah","slide":7,"text":"0,35 / 0,10","textPreview":"0,35 / 0,10","textChars":11,"textLines":1,"bbox":[105,432,300,45]}
+{"kind":"shape","id":"sh/j65ozi9s","slide":7,"bbox":[475,415,330,82]}
+{"kind":"textbox","id":"sh/y5w76ds7","slide":7,"text":"0,35 / 0,15","textPreview":"0,35 / 0,15","textChars":11,"textLines":1,"bbox":[490,432,300,45]}
+{"kind":"shape","id":"sh/m14belcf","slide":7,"bbox":[860,415,330,82]}
+{"kind":"textbox","id":"sh/n2ds7qt0","slide":7,"text":"0,35 / 0,20","textPreview":"0,35 / 0,20","textChars":11,"textLines":1,"bbox":[875,432,300,45]}
+{"kind":"textbox","id":"sh/onmtgvul","slide":7,"text":"9 kombinasi × 15 foto = 135 hasil","textPreview":"9 kombinasi × 15 foto = 135 hasil","textChars":33,"textLines":1,"bbox":[64,560,540,34]}
+{"kind":"textbox","id":"sh/9ova90b6","slide":7,"text":"Galat = |headTop.y aplikasi − Y kepala manual|. Kombinasi final adalah rata-rata galat piksel terkecil.","textPreview":"Galat = |headTop.y aplikasi − Y kepala manual|. Kombinasi final adalah rata-rata galat piksel terkecil.","textChars":103,"textLines":1,"bbox":[570,548,620,64]}
+{"kind":"textbox","id":"sh/exkra1cj","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/wr17em","slide":7,"text":""}
+{"kind":"slide","id":"sl/skukyv","slide":8,"title":"PROGRES APLIKASI","textShapes":12}
+{"kind":"textbox","id":"sh/54jex4zu","slide":8,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/i1svm903","slide":8,"text":"footBottom bukan ankle: aplikasi mencari bagian kaki paling bawah","textPreview":"footBottom bukan ankle: aplikasi mencari bagian kaki paling bawah","textChars":65,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/j21wvuho","slide":8,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/wzadkzix","slide":8,"bbox":[64,170,330,230]}
+{"kind":"shape","id":"sh/h0jet4zi","slide":8,"bbox":[64,170,8,230]}
+{"kind":"textbox","id":"sh/ux8vip0r","slide":8,"text":"ANKLE","textPreview":"ANKLE","textChars":5,"textLines":1,"bbox":[90,188,286,30]}
+{"kind":"textbox","id":"sh/vyhcru1c","slide":8,"text":"Pergelangan kaki. Landmark ini tidak selalu menjadi bagian paling bawah, sehingga tidak cukup digunakan sendirian.","textPreview":"Pergelangan kaki. Landmark ini tidak selalu menjadi bagian paling bawah, sehingga tidak cukup digunakan sendirian.","textChars":114,"textLines":1,"bbox":[90,224,286,164]}
+{"kind":"shape","id":"sh/gvudwjih","slide":8,"bbox":[475,170,330,230]}
+{"kind":"shape","id":"sh/1w3e5ozm","slide":8,"bbox":[475,170,8,230]}
+{"kind":"textbox","id":"sh/x0re9kn2","slide":8,"text":"HEEL","textPreview":"HEEL","textChars":4,"textLines":1,"bbox":[501,188,286,30]}
+{"kind":"textbox","id":"sh/wfid0f6h","slide":8,"text":"Tumit. Dapat menjadi titik terbawah ketika posisi kaki atau sudut foto berubah.","textPreview":"Tumit. Dapat menjadi titik terbawah ketika posisi kaki atau sudut foto berubah.","textChars":79,"textLines":1,"bbox":[501,224,286,164]}
+{"kind":"shape","id":"sh/ve9w7a5w","slide":8,"bbox":[886,170,330,230]}
+{"kind":"shape","id":"sh/adgvy5ob","slide":8,"bbox":[886,170,8,230]}
+{"kind":"textbox","id":"sh/9c7e50nq","slide":8,"text":"FOOT INDEX","textPreview":"FOOT INDEX","textChars":10,"textLines":1,"bbox":[912,188,286,30]}
+{"kind":"textbox","id":"sh/8bydwv65","slide":8,"text":"Ujung kaki. Sering berada lebih bawah daripada ankle pada tampilan depan atau samping.","textPreview":"Ujung kaki. Sering berada lebih bawah daripada ankle pada tampilan depan atau samping.","textChars":86,"textLines":1,"bbox":[912,224,286,164]}
+{"kind":"textbox","id":"sh/napw3q5k","slide":8,"text":"Aturan pemilihan","textPreview":"Aturan pemilihan","textChars":16,"textLines":1,"bbox":[64,455,240,28]}
+{"kind":"textbox","id":"sh/m9gvulof","slide":8,"text":"footBottom = titik dengan koordinat Y terbesar dari ankle, heel, dan foot index kedua kaki.","textPreview":"footBottom = titik dengan koordinat Y terbesar dari ankle, heel, dan foot index kedua kaki.","textChars":91,"textLines":1,"bbox":[64,493,1140,42]}
+{"kind":"textbox","id":"sh/t8beh4na","slide":8,"text":"Pada citra Android/OpenCV, Y bertambah dari atas ke bawah; karena itu Y terbesar berarti posisi paling rendah.","textPreview":"Pada citra Android/OpenCV, Y bertambah dari atas ke bawah; karena itu Y terbesar berarti posisi paling rendah.","textChars":110,"textLines":1,"bbox":[64,552,1140,40]}
+{"kind":"textbox","id":"sh/s72x8z6p","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/skukyv","slide":8,"text":""}
+{"kind":"slide","id":"sl/drlhy2","slide":9,"title":"PROGRES APLIKASI","textShapes":10}
+{"kind":"textbox","id":"sh/dkjetgre","slide":9,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/qh8vyl8n","slide":9,"text":"Tinggi dihitung dari selisih kepala–kaki lalu dikonversi ke cm","textPreview":"Tinggi dihitung dari selisih kepala–kaki lalu dikonversi ke cm","textChars":62,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/bihwrq98","slide":9,"bbox":[64,132,1152,1]}
+{"kind":"textbox","id":"sh/0nax4vq5","slide":9,"text":"verticalHeightPx = |footBottom.y − headTop.y|","textPreview":"verticalHeightPx = |footBottom.y − headTop.y|","textChars":45,"textLines":1,"bbox":[115,175,1050,64]}
+{"kind":"textbox","id":"sh/l8jex0ra","slide":9,"text":"Tinggi mentah = verticalHeightPx × cmPerPixel × faktor kedalaman","textPreview":"Tinggi mentah = verticalHeightPx × cmPerPixel × faktor kedalaman","textChars":64,"textLines":1,"bbox":[115,285,1050,54]}
+{"kind":"textbox","id":"sh/ylsf2l8z","slide":9,"text":"Tinggi akhir = tinggi mentah × faktor kalibrasi","textPreview":"Tinggi akhir = tinggi mentah × faktor kalibrasi","textChars":47,"textLines":1,"bbox":[115,385,1050,54]}
+{"kind":"shape","id":"sh/zm1wvq9k","slide":9,"bbox":[170,500,390,105]}
+{"kind":"shape","id":"sh/8bax8vq1","slide":9,"bbox":[170,500,8,105]}
+{"kind":"textbox","id":"sh/9c3e10rm","slide":9,"text":"FAKTOR KEDALAMAN","textPreview":"FAKTOR KEDALAMAN","textChars":16,"textLines":1,"bbox":[196,518,346,30]}
+{"kind":"textbox","id":"sh/1snm9o3e","slide":9,"text":"(350 − 50) ÷ 350 = 0,857","textPreview":"(350 − 50) ÷ 350 = 0,857","textChars":24,"textLines":1,"bbox":[196,554,346,39]}
+{"kind":"shape","id":"sh/0relgj2t","slide":9,"bbox":[720,500,390,105]}
+{"kind":"shape","id":"sh/zq547el8","slide":9,"bbox":[720,500,8,105]}
+{"kind":"textbox","id":"sh/epw3e9kn","slide":9,"text":"KALIBRASI SAAT INI","textPreview":"KALIBRASI SAAT INI","textChars":18,"textLines":1,"bbox":[746,518,346,30]}
+{"kind":"textbox","id":"sh/9g7mdoja","slide":9,"text":"1,025 — masih harus dibuktikan","textPreview":"1,025 — masih harus dibuktikan","textChars":30,"textLines":1,"bbox":[746,554,346,39]}
+{"kind":"textbox","id":"sh/ofylkj25","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/drlhy2","slide":9,"text":""}
+{"kind":"slide","id":"sl/0a83j5","slide":10,"title":"PROGRES APLIKASI","textShapes":9}
+{"kind":"textbox","id":"sh/fq1o3at0","slide":10,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/gra5cfal","slide":10,"text":"Nilai 350/50 harus berasal dari meteran, bukan dari hasil terbaik","textPreview":"Nilai 350/50 harus berasal dari meteran, bukan dari hasil terbaik","textChars":65,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/1sj65kb6","slide":10,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/6l8n65sj","slide":10,"bbox":[64,175,520,210]}
+{"kind":"shape","id":"sh/rm1ozat4","slide":10,"bbox":[64,175,8,210]}
+{"kind":"textbox","id":"sh/sna58fa9","slide":10,"text":"JARAK KAMERA–BOARD","textPreview":"JARAK KAMERA–BOARD","textChars":18,"textLines":1,"bbox":[90,193,476,30]}
+{"kind":"textbox","id":"sh/toj61kbu","slide":10,"text":"350 cm adalah jarak optik dari kamera ke bidang board. Nilainya harus tetap selama satu rangkaian pengujian.","textPreview":"350 cm adalah jarak optik dari kamera ke bidang board. Nilainya harus tetap selama satu rangkaian pengujian.","textChars":108,"textLines":1,"bbox":[90,229,476,144]}
+{"kind":"shape","id":"sh/qhc7i9sn","slide":10,"bbox":[632,175,584,210]}
+{"kind":"shape","id":"sh/bilobut8","slide":10,"bbox":[632,175,8,210]}
+{"kind":"textbox","id":"sh/v6to3apo","slide":10,"text":"JARAK SUBJEK–BOARD","textPreview":"JARAK SUBJEK–BOARD","textChars":18,"textLines":1,"bbox":[658,193,540,30]}
+{"kind":"textbox","id":"sh/u5k7a5o3","slide":10,"text":"50 cm menunjukkan subjek berada di depan bidang board. Faktor 0,857 mengoreksi perbedaan kedalaman tersebut.","textPreview":"50 cm menunjukkan subjek berada di depan bidang board. Faktor 0,857 mengoreksi perbedaan kedalaman tersebut.","textChars":108,"textLines":1,"bbox":[658,229,540,144]}
+{"kind":"textbox","id":"sh/h8bq507u","slide":10,"text":"Pengujian yang benar","textPreview":"Pengujian yang benar","textChars":20,"textLines":1,"bbox":[64,450,300,30]}
+{"kind":"textbox","id":"sh/w72pcv69","slide":10,"text":"Uji jarak fisik 0, 25, dan 50 cm sambil mencatat hasil. Jangan memilih jarak berdasarkan tinggi yang paling mendekati nilai sebenarnya.","textPreview":"Uji jarak fisik 0, 25, dan 50 cm sambil mencatat hasil. Jangan memilih jarak berdasarkan tinggi yang paling mendekati nilai sebenarnya.","textChars":135,"textLines":1,"bbox":[64,492,1120,78]}
+{"kind":"textbox","id":"sh/jud87ap0","slide":10,"text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/0a83j5","slide":10,"text":""}
+{"kind":"slide","id":"sl/vsg1c1","slide":11,"title":"PROGRES APLIKASI","textShapes":8}
+{"kind":"textbox","id":"sh/zuxobaxc","slide":11,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/0v6pkvex","slide":11,"text":"Progres selesai dan keputusan yang masih dibutuhkan","textPreview":"Progres selesai dan keputusan yang masih dibutuhkan","textChars":51,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/lwfqd0fi","slide":11,"bbox":[64,132,1152,1]}
+{"kind":"shape","id":"sh/mxo7m5wn","slide":11,"bbox":[64,170,535,245]}
+{"kind":"shape","id":"sh/nyx8fax8","slide":11,"bbox":[64,170,8,245]}
+{"kind":"textbox","id":"sh/8j6pofet","slide":11,"text":"SUDAH SELESAI","textPreview":"SUDAH SELESAI","textChars":13,"textLines":1,"bbox":[90,188,491,30]}
+{"kind":"textbox","id":"sh/9kfqhkfe","slide":11,"text":"✓ Aplikasi end-to-end\n✓ Pengukuran board\n✓ Uji PX 100/120/150\n✓ PX 120 terpilih\n✓ Pengambilan 135 hasil koefisien kepala\n✓ Debug headTop dan footBottom tersedia","textPreview":"✓ Aplikasi end-to-end | ✓ Pengukuran board | ✓ Uji PX 100/120/150 | ✓ PX 120 terpilih | ✓ Pengambilan 135 hasil koefisien kepala | ✓ Debu...","textChars":160,"textLines":6,"bbox":[90,224,491,179]}
+{"kind":"shape","id":"sh/21k7algj","slide":11,"bbox":[640,170,576,245]}
+{"kind":"shape","id":"sh/32do3qx4","slide":11,"bbox":[640,170,8,245]}
+{"kind":"textbox","id":"sh/ju5c3u1o","slide":11,"text":"BELUM SELESAI","textPreview":"BELUM SELESAI","textChars":13,"textLines":1,"bbox":[666,188,532,30]}
+{"kind":"textbox","id":"sh/itwvu9k3","slide":11,"text":"○ Anotasi kepala manual\n○ Pilih koefisien kepala final\n○ Pemeriksaan footBottom\n○ Uji jarak dan faktor kedalaman\n○ Hitung faktor kalibrasi final\n○ Uji kontur, pose, dan akurasi akhir","textPreview":"○ Anotasi kepala manual | ○ Pilih koefisien kepala final | ○ Pemeriksaan footBottom | ○ Uji jarak dan faktor kedalaman | ○ Hitung faktor ...","textChars":182,"textLines":6,"bbox":[666,224,532,179]}
+{"kind":"textbox","id":"sh/5w7u54ju","slide":11,"text":"Jangan mengklaim parameter final sebelum tabel galat diisi.","textPreview":"Jangan mengklaim parameter final sebelum tabel galat diisi.","textChars":59,"textLines":1,"bbox":[110,500,1060,54]}
+{"kind":"textbox","id":"sh/kvedwz29","slide":11,"text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/vsg1c1","slide":11,"text":""}
+{"kind":"slide","id":"sl/zd23ra","slide":12,"title":"PROGRES APLIKASI","textShapes":10}
+{"kind":"textbox","id":"sh/etsbilov","slide":12,"text":"PROGRES APLIKASI","textPreview":"PROGRES APLIKASI","textChars":16,"textLines":1,"bbox":[64,34,350,24]}
+{"kind":"textbox","id":"sh/1w3ut07m","slide":12,"text":"Target bimbingan: menyepakati metode sebelum pengujian akhir","textPreview":"Target bimbingan: menyepakati metode sebelum pengujian akhir","textChars":60,"textLines":1,"bbox":[64,66,1152,58]}
+{"kind":"shape","id":"sh/gvutkv61","slide":12,"bbox":[64,132,1152,1]}
+{"kind":"textbox","id":"sh/rq1snqpk","slide":12,"text":"Keputusan yang perlu dikonfirmasi","textPreview":"Keputusan yang perlu dikonfirmasi","textChars":33,"textLines":1,"bbox":[64,170,430,34]}
+{"kind":"textbox","id":"sh/6psbeloz","slide":12,"text":"1. Apakah 10 data kalibrasi + 5 validasi sudah cukup?","textPreview":"1. Apakah 10 data kalibrasi + 5 validasi sudah cukup?","textChars":53,"textLines":1,"bbox":[90,225,1080,48]}
+{"kind":"textbox","id":"sh/tsjap07a","slide":12,"text":"2. Apakah anotasi manual headTop perlu dua penilai?","textPreview":"2. Apakah anotasi manual headTop perlu dua penilai?","textChars":51,"textLines":1,"bbox":[90,287,1080,48]}
+{"kind":"textbox","id":"sh/sratgv6p","slide":12,"text":"3. Apakah pemeriksaan visual footBottom sudah memadai?","textPreview":"3. Apakah pemeriksaan visual footBottom sudah memadai?","textChars":54,"textLines":1,"bbox":[90,349,1080,48]}
+{"kind":"textbox","id":"sh/bm5czapo","slide":12,"text":"4. Apakah uji jarak 0/25/50 cm sesuai rancangan?","textPreview":"4. Apakah uji jarak 0/25/50 cm sesuai rancangan?","textChars":48,"textLines":1,"bbox":[90,411,1080,48]}
+{"kind":"textbox","id":"sh/qlwbqpo3","slide":12,"text":"5. Parameter kontur dan pose mana yang wajib dilaporkan?","textPreview":"5. Parameter kontur dan pose mana yang wajib dilaporkan?","textChars":56,"textLines":1,"bbox":[90,473,1080,48]}
+{"kind":"textbox","id":"sh/gjudkvil","slide":12,"text":"Hasil yang diharapkan: parameter final dikunci, lalu aplikasi diuji pada foto baru yang tidak dipakai untuk kalibrasi.","textPreview":"Hasil yang diharapkan: parameter final dikunci, lalu aplikasi diuji pada foto baru yang tidak dipakai untuk kalibrasi.","textChars":118,"textLines":1,"bbox":[95,590,1090,55]}
+{"kind":"textbox","id":"sh/hknedgz6","slide":12,"text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1170,676,46,20]}
+{"kind":"notes","id":"nt/zd23ra","slide":12,"text":""}

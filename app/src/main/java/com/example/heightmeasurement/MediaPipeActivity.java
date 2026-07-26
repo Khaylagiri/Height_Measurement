@@ -44,6 +44,7 @@ public class MediaPipeActivity extends AppCompatActivity {
 
     private static final String TAG = "MEDIAPIPE_HEIGHT";
     private static final String MODEL_ASSET_PATH = "pose_landmarker_lite.task";
+    private static final double DEFAULT_CAMERA_DISTANCE_CM = 150.0;
 
     private ImageView imageViewMediaPipe;
     private Button btnPickMediaPipeImage;
@@ -58,6 +59,7 @@ public class MediaPipeActivity extends AppCompatActivity {
     private double boardTopY = -1.0;
     private double boardBottomY = -1.0;
     private double boardPixelHeight = -1.0;
+    private double cameraDistanceCm = DEFAULT_CAMERA_DISTANCE_CM;
 
     private final ActivityResultLauncher<String> pickImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
@@ -146,6 +148,10 @@ public class MediaPipeActivity extends AppCompatActivity {
             boardTopY = getIntent().getDoubleExtra("board_top_y", -1.0);
             boardBottomY = getIntent().getDoubleExtra("board_bottom_y", -1.0);
             boardPixelHeight = getIntent().getDoubleExtra("board_pixel_height", -1.0);
+            cameraDistanceCm = getIntent().getDoubleExtra(
+                    "camera_distance_cm",
+                    DEFAULT_CAMERA_DISTANCE_CM
+            );
 
             boolean fromPerspective = imagePath != null && !imagePath.trim().isEmpty();
 
@@ -276,6 +282,7 @@ public class MediaPipeActivity extends AppCompatActivity {
         intent.putExtra("board_top_y", boardTopY);
         intent.putExtra("board_bottom_y", boardBottomY);
         intent.putExtra("board_pixel_height", boardPixelHeight);
+        intent.putExtra("camera_distance_cm", cameraDistanceCm);
         startActivity(intent);
     }
 
