@@ -28,10 +28,7 @@ The following videos demonstrate the application using two different subject cat
 ### 1. Children's Height Measurement
 Demonstration of the application when measuring a child's height using a full-body image.
 
-**Video Demo:**  
-[![Watch Height Measurement Demo](https://drive.google.com/thumbnail?id=1oevGNQD3EXG4kVcBgvAgL0DzPlkeMxer&sz=w1000)](https://drive.google.com/file/d/1oevGNQD3EXG4kVcBgvAgL0DzPlkeMxer/view)
-
-[▶ Watch Full Video](https://drive.google.com/file/d/1oevGNQD3EXG4kVcBgvAgL0DzPlkeMxer/view)
+[[Insert Children Demo Video Link Here]](https://drive.google.com/file/d/1oevGNQD3EXG4kVcBgvAgL0DzPlkeMxer/view?usp=drive_link)
 
 ### 2. Adult Height Measurement
 Demonstration of the application when measuring an adult's height using a full-body image.
